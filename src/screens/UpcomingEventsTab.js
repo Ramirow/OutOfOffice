@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import AttendeeService from '../services/AttendeeService';
 
 // Default upcoming events data with actual dates
 const defaultUpcomingEvents = [
@@ -49,25 +50,82 @@ const UpcomingEventsTab = ({ enrolledEvents = [] }) => {
   };
 
   // Function to update event status based on date
-  const updateEventStatus = (event) => {
+  const updateEventStatus = async (event) => {
     if (event.status === 'confirmed' && isEventPassed(event.eventDate || event.date)) {
-      return { ...event, status: 'attended' };
+      // Initialize attendees when event becomes attended
+      const eventId = event.id?.toString() || `event_${Date.now()}`;
+      const attendees = await AttendeeService.initializeEventAttendees(
+        eventId, 
+        event.title || 'Event'
+      );
+      
+      return { 
+        ...event, 
+        status: 'attended',
+        attendees: attendees.length,
+        eventId: eventId,
+      };
     }
     return event;
   };
 
   // Effect to update events and their statuses
   useEffect(() => {
-    const updatedDefaultEvents = defaultUpcomingEvents.map(updateEventStatus);
-    const updatedEnrolledEvents = enrolledEvents.map(updateEventStatus);
-    const allUpcomingEvents = [...updatedDefaultEvents, ...updatedEnrolledEvents];
-    setEvents(allUpcomingEvents);
+    const loadEvents = async () => {
+      // Update default events
+      const updatedDefaultEvents = await Promise.all(
+        defaultUpcomingEvents.map(async (event) => {
+          const eventId = event.id?.toString() || `default_${event.id}`;
+          const updated = await updateEventStatus(event);
+          // Get attendee count if event is attended
+          if (updated.status === 'attended') {
+            const count = await AttendeeService.getAttendeeCount(eventId);
+            return { ...updated, attendees: count || updated.attendees || 20, eventId };
+          }
+          return { ...updated, eventId };
+        })
+      );
+
+      // Update enrolled events
+      const updatedEnrolledEvents = await Promise.all(
+        enrolledEvents.map(async (event) => {
+          const eventId = event.id?.toString() || `enrolled_${event.id}`;
+          const updated = await updateEventStatus(event);
+          // Get attendee count if event is attended
+          if (updated.status === 'attended') {
+            const count = await AttendeeService.getAttendeeCount(eventId);
+            return { ...updated, attendees: count || updated.attendees || 20, eventId };
+          }
+          return { ...updated, eventId };
+        })
+      );
+
+      const allUpcomingEvents = [...updatedDefaultEvents, ...updatedEnrolledEvents];
+      setEvents(allUpcomingEvents);
+    };
+
+    loadEvents();
 
     // Set up interval to check for status updates every minute
-    const interval = setInterval(() => {
-      setEvents(prevEvents => 
-        prevEvents.map(updateEventStatus)
-      );
+    const interval = setInterval(async () => {
+      // Get current events from state using a function
+      setEvents(prevEvents => {
+        // Update asynchronously
+        (async () => {
+          const updatedEvents = await Promise.all(
+            prevEvents.map(async (event) => {
+              const updated = await updateEventStatus(event);
+              if (updated.status === 'attended' && updated.eventId) {
+                const count = await AttendeeService.getAttendeeCount(updated.eventId);
+                return { ...updated, attendees: count || updated.attendees || 20 };
+              }
+              return updated;
+            })
+          );
+          setEvents(updatedEvents);
+        })();
+        return prevEvents; // Return current state while async operation completes
+      });
     }, 60000); // Check every minute
 
     return () => clearInterval(interval);
@@ -137,7 +195,7 @@ const UpcomingEventsTab = ({ enrolledEvents = [] }) => {
           <View style={styles.attendeesInfo}>
             <Ionicons name="people" size={16} color="#2196F3" />
             <Text style={styles.attendeesText}>
-              {item.attendees || 20} attendees • Tap to connect
+              {item.attendees || 20} attendees • Tap to swipe & connect
             </Text>
           </View>
         )}

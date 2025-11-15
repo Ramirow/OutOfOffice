@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
+import EventEnrollmentService from '../services/EventEnrollmentService';
 import HomeTab from './HomeTab';
 import UpcomingEventsTab from './UpcomingEventsTab';
 import AvailableEventsTab from './AvailableEventsTab';
@@ -20,11 +21,37 @@ const HomeScreen = () => {
   const [enrolledEvents, setEnrolledEvents] = useState([]);
   const [customEvents, setCustomEvents] = useState([]);
   const [showProfile, setShowProfile] = useState(false);
+  const [loadingEnrollments, setLoadingEnrollments] = useState(true);
   const { logout, user, isAdmin, isPremium, canAddEvents } = useAuth();
+
+  // Load enrolled events from Firestore when user logs in
+  useEffect(() => {
+    if (user?.id) {
+      loadEnrolledEvents();
+    }
+  }, [user?.id]);
+
+  // Load enrolled events from Firestore
+  const loadEnrolledEvents = async () => {
+    try {
+      setLoadingEnrollments(true);
+      const events = await EventEnrollmentService.getUserEnrolledEvents(user.id);
+      setEnrolledEvents(events);
+      console.log('Loaded enrolled events from Firestore:', events.length);
+    } catch (error) {
+      console.error('Error loading enrolled events:', error);
+      // Graceful degradation - continue with empty array
+      setEnrolledEvents([]);
+    } finally {
+      setLoadingEnrollments(false);
+    }
+  };
 
   const handleLogout = async () => {
     try {
       await logout();
+      // Clear enrolled events on logout
+      setEnrolledEvents([]);
       console.log('User logged out successfully');
     } catch (error) {
       console.error('Logout error:', error);
@@ -32,16 +59,25 @@ const HomeScreen = () => {
     }
   };
 
-  const handleEnrollEvent = (event) => {
-    // Add enrolled event with confirmation status
-    const enrolledEvent = {
-      ...event,
-      id: Date.now(), // Generate unique ID for enrolled event
-      enrolledAt: new Date().toISOString(),
-      status: 'confirmed'
-    };
-    
-    setEnrolledEvents(prev => [...prev, enrolledEvent]);
+  const handleEnrollEvent = async (event) => {
+    try {
+      // Save to Firestore (cloud database)
+      const enrolledEvent = await EventEnrollmentService.enrollUserInEvent(
+        user.id,
+        event
+      );
+
+      // Update local state
+      setEnrolledEvents(prev => [...prev, enrolledEvent]);
+      
+      Alert.alert(
+        'Enrolled Successfully!', 
+        `You've been enrolled in "${event.title}". This will be saved permanently.`
+      );
+    } catch (error) {
+      console.error('Error enrolling in event:', error);
+      Alert.alert('Error', 'Failed to enroll in event. Please try again.');
+    }
   };
 
   const handleAddCustomEvent = (newEvent) => {

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -8,86 +8,69 @@ import {
   Dimensions,
   Alert,
   SafeAreaView,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Swiper from 'react-native-deck-swiper';
+import AttendeeService from '../services/AttendeeService';
 
 const { width, height } = Dimensions.get('window');
 
-// Mock attendees data - in a real app, this would come from your API
-const generateMockAttendees = (eventTitle) => [
-  {
-    id: 1,
-    name: 'Sarah Johnson',
-    job: 'UX Designer',
-    company: 'Tech Innovations',
-    age: 28,
-    bio: 'Passionate about creating user-centered designs. Love hiking and photography in my free time.',
-    image: 'https://images.unsplash.com/photo-1494790108755-2616b612b786?w=400&h=600&fit=crop',
-    interests: ['Design', 'Photography', 'Hiking'],
-    mutualConnections: 3,
-  },
-  {
-    id: 2,
-    name: 'Michael Chen',
-    job: 'Software Engineer',
-    company: 'StartupCorp',
-    age: 32,
-    bio: 'Full-stack developer who enjoys building scalable applications. Coffee enthusiast and weekend rock climber.',
-    image: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&h=600&fit=crop',
-    interests: ['Coding', 'Coffee', 'Rock Climbing'],
-    mutualConnections: 5,
-  },
-  {
-    id: 3,
-    name: 'Emily Davis',
-    job: 'Product Manager',
-    company: 'Digital Solutions',
-    age: 29,
-    bio: 'Strategic thinker with a passion for innovative products. Love traveling and trying new cuisines.',
-    image: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=400&h=600&fit=crop',
-    interests: ['Product Strategy', 'Travel', 'Cooking'],
-    mutualConnections: 2,
-  },
-  {
-    id: 4,
-    name: 'David Rodriguez',
-    job: 'Data Scientist',
-    company: 'Analytics Pro',
-    age: 35,
-    bio: 'Turning data into insights. Enjoy playing chess and reading sci-fi novels in my spare time.',
-    image: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=400&h=600&fit=crop',
-    interests: ['Data Analysis', 'Chess', 'Sci-Fi'],
-    mutualConnections: 1,
-  },
-  {
-    id: 5,
-    name: 'Lisa Thompson',
-    job: 'Marketing Director',
-    company: 'Brand Masters',
-    age: 31,
-    bio: 'Creative marketer who loves building brand stories. Yoga instructor and plant parent.',
-    image: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=400&h=600&fit=crop',
-    interests: ['Marketing', 'Yoga', 'Plants'],
-    mutualConnections: 4,
-  },
-];
-
 const EventAttendeesScreen = ({ route, navigation }) => {
   const { event } = route.params;
-  const [attendees] = useState(generateMockAttendees(event.title));
+  const [attendees, setAttendees] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [swipedAttendees, setSwipedAttendees] = useState([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const swiperRef = useRef(null);
 
-  const handleSwipeLeft = (cardIndex) => {
+  // Load attendees when component mounts
+  useEffect(() => {
+    loadAttendees();
+  }, []);
+
+  const loadAttendees = async () => {
+    try {
+      setLoading(true);
+      const eventId = event.eventId || event.id?.toString() || `event_${event.id}`;
+      
+      // Get stored attendees or initialize if they don't exist
+      const storedAttendees = await AttendeeService.initializeEventAttendees(
+        eventId,
+        event.title || 'Event'
+      );
+      
+      setAttendees(storedAttendees);
+    } catch (error) {
+      console.error('Error loading attendees:', error);
+      Alert.alert('Error', 'Failed to load attendees. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSwipeLeft = async (cardIndex) => {
     const attendee = attendees[cardIndex];
+    if (!attendee) return;
+    
+    const eventId = event.eventId || event.id?.toString() || `event_${event.id}`;
+    
+    // Store the swipe action
+    await AttendeeService.updateAttendeeAction(eventId, attendee.id, 'passed');
+    
     setSwipedAttendees(prev => [...prev, { ...attendee, action: 'passed' }]);
     console.log(`Passed on ${attendee.name}`);
   };
 
-  const handleSwipeRight = (cardIndex) => {
+  const handleSwipeRight = async (cardIndex) => {
     const attendee = attendees[cardIndex];
+    if (!attendee) return;
+    
+    const eventId = event.eventId || event.id?.toString() || `event_${event.id}`;
+    
+    // Store the swipe action
+    await AttendeeService.updateAttendeeAction(eventId, attendee.id, 'liked');
+    
     setSwipedAttendees(prev => [...prev, { ...attendee, action: 'liked' }]);
     Alert.alert(
       'Connection Request Sent!',
@@ -156,6 +139,67 @@ const EventAttendeesScreen = ({ route, navigation }) => {
       </TouchableOpacity>
     </View>
   );
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <TouchableOpacity 
+            style={styles.headerButton}
+            onPress={() => navigation.goBack()}
+          >
+            <Ionicons name="arrow-back" size={24} color="#333" />
+          </TouchableOpacity>
+          <View style={styles.headerInfo}>
+            <Text style={styles.headerTitle}>Event Attendees</Text>
+            <Text style={styles.headerSubtitle}>{event.title}</Text>
+          </View>
+          <TouchableOpacity style={styles.headerButton}>
+            <Ionicons name="information-circle-outline" size={24} color="#333" />
+          </TouchableOpacity>
+        </View>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#007AFF" />
+          <Text style={styles.loadingText}>Loading attendees...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (attendees.length === 0) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <TouchableOpacity 
+            style={styles.headerButton}
+            onPress={() => navigation.goBack()}
+          >
+            <Ionicons name="arrow-back" size={24} color="#333" />
+          </TouchableOpacity>
+          <View style={styles.headerInfo}>
+            <Text style={styles.headerTitle}>Event Attendees</Text>
+            <Text style={styles.headerSubtitle}>{event.title}</Text>
+          </View>
+          <TouchableOpacity style={styles.headerButton}>
+            <Ionicons name="information-circle-outline" size={24} color="#333" />
+          </TouchableOpacity>
+        </View>
+        <View style={styles.noMoreCards}>
+          <Ionicons name="people-outline" size={80} color="#ccc" />
+          <Text style={styles.noMoreCardsText}>No Attendees Yet</Text>
+          <Text style={styles.noMoreCardsSubtext}>
+            Attendees will appear here after the event
+          </Text>
+          <TouchableOpacity 
+            style={styles.backButton}
+            onPress={() => navigation.goBack()}
+          >
+            <Text style={styles.backButtonText}>Back to Events</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -453,6 +497,16 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#666',
   },
 });
 

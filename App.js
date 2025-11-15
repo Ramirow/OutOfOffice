@@ -7,7 +7,7 @@ import { AuthProvider, useAuth } from './src/context/AuthContext';
 
 import LoginScreen from './src/screens/LoginScreen';
 import HomeScreen from './src/screens/HomeScreen';
-// import EventAttendeesScreen from './src/screens/EventAttendeesScreen';
+import EventAttendeesScreen from './src/screens/EventAttendeesScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -38,11 +38,11 @@ const AppNavigator = () => {
               component={HomeScreen}
               options={{ headerShown: false }}
             />
-            {/* <Stack.Screen 
+            <Stack.Screen 
               name="EventAttendees" 
               component={EventAttendeesScreen}
               options={{ headerShown: false }}
-            /> */}
+            />
           </>
         )}
       </Stack.Navigator>

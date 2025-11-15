@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import UserService from '../services/UserService';
 
 const AuthContext = createContext();
 
@@ -29,7 +30,7 @@ const INITIAL_MOCK_USERS = [
 ];
 
 const AUTH_STORAGE_KEY = '@OutOfOffice:auth';
-const USERS_STORAGE_KEY = '@OutOfOffice:users';
+// Note: Users are now stored in Firestore, not AsyncStorage
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
@@ -42,65 +43,48 @@ export const useAuth = () => {
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [mockUsers, setMockUsers] = useState(INITIAL_MOCK_USERS);
 
-  // Load saved auth state and users on app start
+  // Load saved auth state and migrate initial users on app start
   useEffect(() => {
-    loadAuthState();
-    loadUsers();
+    initializeApp();
   }, []);
 
-  const loadAuthState = async () => {
+  // Initialize app: load auth state and migrate initial users to Firestore
+  const initializeApp = async () => {
     try {
-      const savedUser = await AsyncStorage.getItem(AUTH_STORAGE_KEY);
-      if (savedUser) {
-        setUser(JSON.parse(savedUser));
-      }
+      // Migrate initial mock users to Firestore (one-time operation)
+      await UserService.migrateInitialUsers(INITIAL_MOCK_USERS);
+      
+      // Load saved auth state
+      await loadAuthState();
     } catch (error) {
-      console.error('Error loading auth state:', error);
+      console.error('Error initializing app:', error);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const migrateUsersToHashedPasswords = (users) => {
-    return users.map(user => ({
-      ...user,
-      password: isPasswordHashed(user.password) ? user.password : hashPassword(user.password)
-    }));
-  };
-
-  const loadUsers = async () => {
+  const loadAuthState = async () => {
     try {
-      const savedUsers = await AsyncStorage.getItem(USERS_STORAGE_KEY);
-      if (savedUsers) {
-        const parsedUsers = JSON.parse(savedUsers);
-        // Migrate old plain text passwords to hashed format
-        const migratedUsers = migrateUsersToHashedPasswords(parsedUsers);
-        
-        // Save the migrated users back to storage
-        await AsyncStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(migratedUsers));
-        setMockUsers(migratedUsers);
-        
-        console.log('Users loaded and migrated successfully');
-      } else {
-        // First time app launch - save initial users
-        await AsyncStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(INITIAL_MOCK_USERS));
-        setMockUsers(INITIAL_MOCK_USERS);
+      // Load session from AsyncStorage (for quick access)
+      const savedUser = await AsyncStorage.getItem(AUTH_STORAGE_KEY);
+      if (savedUser) {
+        const parsedUser = JSON.parse(savedUser);
+        // Verify user still exists in Firestore and get latest data
+        const firestoreUser = await UserService.getUserById(parsedUser.id);
+        if (firestoreUser) {
+          // Remove password from user object
+          const { password, ...userWithoutPassword } = firestoreUser;
+          setUser(userWithoutPassword);
+          // Update AsyncStorage with latest data
+          await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(userWithoutPassword));
+        } else {
+          // User deleted from Firestore, clear session
+          await AsyncStorage.removeItem(AUTH_STORAGE_KEY);
+        }
       }
     } catch (error) {
-      console.error('Error loading users:', error);
-      // Fallback to initial users
-      setMockUsers(INITIAL_MOCK_USERS);
-    }
-  };
-
-  const saveUsers = async (users) => {
-    try {
-      await AsyncStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
-      setMockUsers(users);
-    } catch (error) {
-      console.error('Error saving users:', error);
+      console.error('Error loading auth state:', error);
     }
   };
 
@@ -111,73 +95,52 @@ export const AuthProvider = ({ children }) => {
     // Hash the input password for comparison
     const hashedPassword = hashPassword(password);
     
-    // Find user in mock data - support both hashed and plain text passwords during transition
-    const foundUser = mockUsers.find(u => {
-      if (u.email.toLowerCase() === email.toLowerCase()) {
-        // Check if stored password is hashed or plain text
-        if (isPasswordHashed(u.password)) {
-          return u.password === hashedPassword;
-        } else {
-          // Legacy plain text password support
-          return u.password === password;
+    // Get user from Firestore
+    const foundUser = await UserService.getUserByEmail(email);
+    
+    if (foundUser) {
+      // Check password - support both hashed and plain text during transition
+      let passwordMatches = false;
+      if (isPasswordHashed(foundUser.password)) {
+        passwordMatches = foundUser.password === hashedPassword;
+      } else {
+        // Legacy plain text password support
+        passwordMatches = foundUser.password === password;
+        // Update to hashed version if it was plain text
+        if (passwordMatches) {
+          await UserService.updateUser(foundUser.id, { password: hashedPassword });
         }
       }
-      return false;
-    });
 
-    if (foundUser) {
-      // If user had plain text password, update it to hashed version
-      if (!isPasswordHashed(foundUser.password)) {
-        const updatedUsers = mockUsers.map(u => 
-          u.id === foundUser.id ? { ...u, password: hashedPassword } : u
-        );
-        await saveUsers(updatedUsers);
+      if (passwordMatches) {
+        // Remove password from user object before storing
+        const { password, ...userWithoutPassword } = foundUser;
+        
+        // Save to AsyncStorage for quick access
+        await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(userWithoutPassword));
+        
+        // Update state
+        setUser(userWithoutPassword);
+        
+        return { success: true, user: userWithoutPassword };
       }
-
-      // Remove password from user object before storing
-      const userWithoutPassword = { 
-        id: foundUser.id, 
-        email: foundUser.email, 
-        name: foundUser.name,
-        role: foundUser.role,
-        // Include additional profile fields if they exist
-        image: foundUser.image || null,
-        age: foundUser.age || '',
-        career: foundUser.career || '',
-        study: foundUser.study || '',
-        hobby: foundUser.hobby || '',
-        bio: foundUser.bio || '',
-        phone: foundUser.phone || '',
-        location: foundUser.location || '',
-      };
-      
-      // Save to AsyncStorage
-      await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(userWithoutPassword));
-      
-      // Update state
-      setUser(userWithoutPassword);
-      
-      return { success: true, user: userWithoutPassword };
-    } else {
-      throw new Error('Invalid email or password');
     }
+    
+    throw new Error('Invalid email or password');
   };
 
   const register = async (email, password, name) => {
     // Simulate API call delay
     await new Promise(resolve => setTimeout(resolve, 1000));
     
-    // Check if user already exists
-    const existingUser = mockUsers.find(
-      u => u.email.toLowerCase() === email.toLowerCase()
-    );
-
+    // Check if user already exists in Firestore
+    const existingUser = await UserService.getUserByEmail(email);
     if (existingUser) {
       throw new Error('User with this email already exists');
     }
 
     // Generate new user ID
-    const newUserId = (mockUsers.length + 1).toString();
+    const newUserId = Date.now().toString();
     
     // Create new user with 'regular' role by default and hashed password
     const newUser = {
@@ -196,27 +159,13 @@ export const AuthProvider = ({ children }) => {
       location: '',
     };
 
-    // Add to mock users array and save persistently
-    const updatedUsers = [...mockUsers, newUser];
-    await saveUsers(updatedUsers);
+    // Save to Firestore
+    await UserService.createUser(newUser);
 
     // Remove password from user object before storing
-    const userWithoutPassword = { 
-      id: newUser.id, 
-      email: newUser.email, 
-      name: newUser.name,
-      role: newUser.role,
-      image: newUser.image,
-      age: newUser.age,
-      career: newUser.career,
-      study: newUser.study,
-      hobby: newUser.hobby,
-      bio: newUser.bio,
-      phone: newUser.phone,
-      location: newUser.location,
-    };
+    const { password: _, ...userWithoutPassword } = newUser;
     
-    // Save to AsyncStorage
+    // Save to AsyncStorage for quick access
     await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(userWithoutPassword));
     
     // Update state
@@ -229,40 +178,19 @@ export const AuthProvider = ({ children }) => {
     // Simulate API call delay
     await new Promise(resolve => setTimeout(resolve, 500));
     
-    // Find and update user in mock data
-    const userIndex = mockUsers.findIndex(u => u.id === user.id);
-    if (userIndex !== -1) {
-      const updatedUsers = [...mockUsers];
-      updatedUsers[userIndex] = {
-        ...updatedUsers[userIndex],
-        ...profileData,
-      };
-      await saveUsers(updatedUsers);
-    }
-
-    // Create updated user object without password
-    const updatedUser = {
-      id: user.id,
-      email: profileData.email,
-      name: profileData.name,
-      role: user.role,
-      image: profileData.image || null,
-      age: profileData.age,
-      career: profileData.career,
-      study: profileData.study,
-      hobby: profileData.hobby,
-      bio: profileData.bio,
-      phone: profileData.phone,
-      location: profileData.location,
-    };
-
-    // Save to AsyncStorage
-    await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(updatedUser));
+    // Update in Firestore
+    const result = await UserService.updateUser(user.id, profileData);
+    
+    // Remove password from user object
+    const { password, ...userWithoutPassword } = result.user;
+    
+    // Update AsyncStorage
+    await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(userWithoutPassword));
     
     // Update state
-    setUser(updatedUser);
+    setUser(userWithoutPassword);
     
-    return { success: true, user: updatedUser };
+    return { success: true, user: userWithoutPassword };
   };
 
   const logout = async () => {
@@ -275,14 +203,14 @@ export const AuthProvider = ({ children }) => {
   };
 
   // Debug function to reset users (for development)
+  // Note: This only clears local session, Firestore users remain
   const resetUsers = async () => {
     try {
-      await AsyncStorage.removeItem(USERS_STORAGE_KEY);
       await AsyncStorage.removeItem(AUTH_STORAGE_KEY);
-      setMockUsers(INITIAL_MOCK_USERS);
       setUser(null);
-      await AsyncStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(INITIAL_MOCK_USERS));
-      console.log('Users reset successfully');
+      // Re-migrate initial users to Firestore
+      await UserService.migrateInitialUsers(INITIAL_MOCK_USERS);
+      console.log('Session cleared and initial users re-migrated to Firestore');
     } catch (error) {
       console.error('Error resetting users:', error);
     }

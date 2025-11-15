@@ -1,5 +1,6 @@
-import { initializeApp } from 'firebase/app';
-import { initializeAuth, getReactNativePersistence } from 'firebase/auth';
+import { initializeApp, getApps } from 'firebase/app';
+import { initializeAuth, getReactNativePersistence, getAuth } from 'firebase/auth';
+import { getFirestore } from 'firebase/firestore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const firebaseConfig = {
@@ -11,20 +12,48 @@ const firebaseConfig = {
   appId: "1:663986336921:web:a965369cb7dd664d447408"
 };
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
-
-// Initialize Auth with AsyncStorage persistence
-let auth;
-try {
-  auth = initializeAuth(app, {
-    persistence: getReactNativePersistence(AsyncStorage)
-  });
-} catch (error) {
-  // Auth might already be initialized
-  const { getAuth } = require("firebase/auth");
-  auth = getAuth(app);
+// Initialize Firebase App (only if not already initialized)
+let app;
+if (getApps().length === 0) {
+  app = initializeApp(firebaseConfig);
+} else {
+  app = getApps()[0];
 }
 
-export { auth };
+// Initialize Auth (optional - app currently uses AsyncStorage for auth)
+// Initialize lazily to avoid "Component auth has not been registered yet" errors
+let auth = null;
+
+// Lazy initialization function - only initialize when actually needed
+const getAuthInstance = () => {
+  if (auth) return auth;
+  
+  try {
+    // Try to initialize with AsyncStorage persistence (for React Native)
+    auth = initializeAuth(app, {
+      persistence: getReactNativePersistence(AsyncStorage)
+    });
+    return auth;
+  } catch (error) {
+    // If initialization fails, try getAuth
+    try {
+      auth = getAuth(app);
+      return auth;
+    } catch (getAuthError) {
+      // If both fail, return null (app uses AsyncStorage for auth anyway)
+      console.warn('Firebase Auth not available:', getAuthError.message || getAuthError);
+      return null;
+    }
+  }
+};
+
+// Export the getter function instead of direct auth instance
+// This prevents initialization errors on import
+export const getFirebaseAuth = getAuthInstance;
+
+// Initialize Firestore (Cloud Database)
+const db = getFirestore(app);
+
+// Export db and app (auth is available via getFirebaseAuth() if needed)
+export { db, getFirebaseAuth };
 export default app;
