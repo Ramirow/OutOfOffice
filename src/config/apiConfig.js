@@ -51,8 +51,9 @@ export const API_CONFIG = {
 };
 
 // Default location settings
+// Change this to your preferred default location
 export const DEFAULT_LOCATION = {
-  city: 'New York',
+  city: 'New York', // Default city for event searches (change to your city)
   state: 'NY',
   country: 'US',
   coordinates: {

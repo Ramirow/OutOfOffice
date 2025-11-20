@@ -1,0 +1,37 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Users collection - Allow read/write for development (no auth required)
+    // WARNING: These rules allow unauthenticated access. For production, 
+    // you should implement proper authentication with Firebase Auth.
+    match /users/{userId} {
+      allow read: if true; // Anyone can read users
+      allow write: if true; // Anyone can write users (for development)
+    }
+    
+    // Event attendees - Allow read for all, write for all (development)
+    match /eventAttendees/{eventId} {
+      allow read: if true; // Anyone can read attendees
+      allow write: if true; // Anyone can write (for development)
+    }
+    
+    // Event enrollments - Allow read/write for all (development)
+    match /eventEnrollments/{enrollmentId} {
+      allow read, write: if true; // Anyone can read/write (for development)
+    }
+    
+    // Custom events - Allow read for all, write for all (development)
+    // Premium/Admin users can create events, everyone can see them
+    match /customEvents/{eventId} {
+      allow read: if true; // Anyone can read custom events
+      allow write: if true; // Anyone can write (for development)
+    }
+    
+    // Allow all other collections (for development)
+    // WARNING: This is permissive. Restrict in production!
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}
+

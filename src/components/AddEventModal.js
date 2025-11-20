@@ -12,6 +12,7 @@ import {
   Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import DateTimePicker from '@react-native-community/datetimepicker';
 
 const CATEGORIES = [
   'Technology',
@@ -38,6 +39,8 @@ const AddEventModal = ({ visible, onClose, onAddEvent }) => {
   });
 
   const [errors, setErrors] = useState({});
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [selectedDate, setSelectedDate] = useState(new Date());
 
   const handleInputChange = (field, value) => {
     setFormData(prev => ({
@@ -139,6 +142,40 @@ const AddEventModal = ({ visible, onClose, onAddEvent }) => {
     onClose();
   };
 
+  const formatDate = (date) => {
+    const options = { year: 'numeric', month: 'short', day: 'numeric' };
+    return date.toLocaleDateString('en-US', options);
+  };
+
+  const handleDateChange = (event, date) => {
+    // On Android, the picker closes automatically
+    if (Platform.OS === 'android') {
+      setShowDatePicker(false);
+      if (date && event.type !== 'dismissed') {
+        setSelectedDate(date);
+        handleInputChange('date', formatDate(date));
+      }
+    } else {
+      // On iOS, update the date as user scrolls
+      if (date) {
+        setSelectedDate(date);
+      }
+      // Handle dismissal
+      if (event.type === 'dismissed') {
+        setShowDatePicker(false);
+      }
+    }
+  };
+
+  const handleConfirmDate = () => {
+    handleInputChange('date', formatDate(selectedDate));
+    setShowDatePicker(false);
+  };
+
+  const openDatePicker = () => {
+    setShowDatePicker(true);
+  };
+
   return (
     <Modal
       visible={visible}
@@ -160,7 +197,12 @@ const AddEventModal = ({ visible, onClose, onAddEvent }) => {
           </TouchableOpacity>
         </View>
 
-        <ScrollView style={styles.form} showsVerticalScrollIndicator={false}>
+        <ScrollView 
+          style={styles.form} 
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+        >
           <View style={styles.formGroup}>
             <Text style={styles.label}>Event Title *</Text>
             <TextInput
@@ -189,9 +231,10 @@ const AddEventModal = ({ visible, onClose, onAddEvent }) => {
             <Text style={styles.label}>Location *</Text>
             <TextInput
               style={[styles.input, errors.location && styles.inputError]}
-              placeholder="Event location"
+              placeholder="e.g., Central Park, New York or 123 Main St, Los Angeles"
               value={formData.location}
               onChangeText={(text) => handleInputChange('location', text)}
+              autoCapitalize="words"
             />
             {errors.location && <Text style={styles.errorText}>{errors.location}</Text>}
           </View>
@@ -210,13 +253,67 @@ const AddEventModal = ({ visible, onClose, onAddEvent }) => {
 
             <View style={[styles.formGroup, styles.halfWidth]}>
               <Text style={styles.label}>Date *</Text>
-              <TextInput
-                style={[styles.input, errors.date && styles.inputError]}
-                placeholder="e.g., Dec 15, 2024"
-                value={formData.date}
-                onChangeText={(text) => handleInputChange('date', text)}
-              />
+              <View style={styles.dateInputContainer}>
+                <TextInput
+                  style={[styles.dateInput, errors.date && styles.inputError]}
+                  placeholder="e.g., Dec 15, 2024"
+                  value={formData.date}
+                  onChangeText={(text) => handleInputChange('date', text)}
+                  editable={false}
+                />
+                <TouchableOpacity
+                  style={styles.calendarButton}
+                  onPress={openDatePicker}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="calendar-outline" size={22} color="#007AFF" />
+                </TouchableOpacity>
+              </View>
               {errors.date && <Text style={styles.errorText}>{errors.date}</Text>}
+              {showDatePicker && (
+                <View style={styles.datePickerContainer}>
+                  <View style={styles.datePickerHeader}>
+                    <Text style={styles.datePickerTitle}>Select Date</Text>
+                    <TouchableOpacity
+                      style={styles.datePickerCloseButton}
+                      onPress={() => setShowDatePicker(false)}
+                    >
+                      <Ionicons name="close" size={24} color="#333" />
+                    </TouchableOpacity>
+                  </View>
+                  <View style={styles.datePickerWrapper}>
+                    <View style={styles.datePickerInnerWrapper}>
+                      <DateTimePicker
+                        value={selectedDate}
+                        mode="date"
+                        display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                        onChange={handleDateChange}
+                        minimumDate={new Date()}
+                        textColor="#333"
+                        accentColor="#007AFF"
+                        themeVariant="light"
+                        style={styles.datePicker}
+                      />
+                    </View>
+                  </View>
+                  {Platform.OS === 'ios' && (
+                    <View style={styles.datePickerActions}>
+                      <TouchableOpacity
+                        style={styles.datePickerCancelButton}
+                        onPress={() => setShowDatePicker(false)}
+                      >
+                        <Text style={styles.datePickerCancelText}>Cancel</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.datePickerConfirmButton}
+                        onPress={handleConfirmDate}
+                      >
+                        <Text style={styles.datePickerConfirmText}>Confirm</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+              )}
             </View>
           </View>
 
@@ -317,8 +414,11 @@ const styles = StyleSheet.create({
   },
   form: {
     flex: 1,
+  },
+  scrollContent: {
     paddingHorizontal: 20,
     paddingTop: 20,
+    paddingBottom: 100,
   },
   formGroup: {
     marginBottom: 20,
@@ -387,6 +487,127 @@ const styles = StyleSheet.create({
   },
   selectedCategoryText: {
     color: '#fff',
+  },
+  dateInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    position: 'relative',
+  },
+  dateInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    paddingRight: 45,
+    fontSize: 16,
+    backgroundColor: '#fff',
+  },
+  calendarButton: {
+    position: 'absolute',
+    right: 12,
+    padding: 5,
+    borderRadius: 6,
+    backgroundColor: '#f0f7ff',
+  },
+  datePickerContainer: {
+    marginTop: 10,
+    marginHorizontal: 0,
+    marginLeft: -15,
+    marginRight: -15,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 5,
+    overflow: 'visible',
+  },
+  datePickerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    backgroundColor: '#007AFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#0056b3',
+  },
+  datePickerTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#fff',
+  },
+  datePickerCloseButton: {
+    padding: 4,
+    borderRadius: 6,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  datePickerWrapper: {
+    paddingHorizontal: 30,
+    paddingVertical: 20,
+    paddingLeft: 35,
+    paddingRight: 35,
+    backgroundColor: '#fafafa',
+    alignItems: 'center',
+    width: '100%',
+    overflow: 'visible',
+  },
+  datePickerInnerWrapper: {
+    width: '100%',
+    alignItems: 'center',
+    paddingHorizontal: 5,
+    overflow: 'visible',
+  },
+  datePicker: {
+    width: '100%',
+    maxWidth: '100%',
+    marginHorizontal: 0,
+  },
+  datePickerActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    backgroundColor: '#fff',
+    borderTopWidth: 1,
+    borderTopColor: '#e0e0e0',
+    gap: 10,
+  },
+  datePickerCancelButton: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    backgroundColor: '#f5f5f5',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#ddd',
+  },
+  datePickerCancelText: {
+    color: '#666',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  datePickerConfirmButton: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    backgroundColor: '#007AFF',
+    alignItems: 'center',
+  },
+  datePickerConfirmText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
 

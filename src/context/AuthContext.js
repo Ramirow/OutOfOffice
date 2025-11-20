@@ -139,8 +139,8 @@ export const AuthProvider = ({ children }) => {
       throw new Error('User with this email already exists');
     }
 
-    // Generate new user ID
-    const newUserId = Date.now().toString();
+    // Generate new user ID (incremental like mock users: '5', '6', etc.)
+    const newUserId = await UserService.getNextUserId();
     
     // Create new user with 'regular' role by default and hashed password
     const newUser = {

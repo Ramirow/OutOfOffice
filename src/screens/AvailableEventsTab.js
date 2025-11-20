@@ -311,7 +311,7 @@ const AvailableEventsTab = ({ onEnrollEvent, customEvents = [], onAddCustomEvent
       <AddEventModal
         visible={showAddModal}
         onClose={() => setShowAddModal(false)}
-        onSave={handleAddEvent}
+        onAddEvent={handleAddEvent}
       />
     </View>
   );

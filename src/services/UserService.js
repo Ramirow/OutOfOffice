@@ -121,6 +121,29 @@ class UserService {
     }
   }
 
+  // Generate next incremental user ID (similar to mock users: '1', '2', '3', etc.)
+  static async getNextUserId() {
+    try {
+      const allUsers = await this.getAllUsers();
+      let maxId = 0;
+      
+      // Find the highest numeric ID
+      allUsers.forEach((user) => {
+        const numericId = parseInt(user.id, 10);
+        if (!isNaN(numericId) && numericId > maxId) {
+          maxId = numericId;
+        }
+      });
+      
+      // Return the next ID as a string (like mock users)
+      return (maxId + 1).toString();
+    } catch (error) {
+      console.error('Error generating next user ID:', error);
+      // Fallback to timestamp if query fails
+      return Date.now().toString();
+    }
+  }
+
   // Migrate initial mock users to Firestore (one-time operation)
   static async migrateInitialUsers(initialUsers) {
     try {

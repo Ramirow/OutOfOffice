@@ -49,11 +49,11 @@ const getAuthInstance = () => {
 
 // Export the getter function instead of direct auth instance
 // This prevents initialization errors on import
-export const getFirebaseAuth = getAuthInstance;
 
 // Initialize Firestore (Cloud Database)
 const db = getFirestore(app);
 
 // Export db and app (auth is available via getFirebaseAuth() if needed)
-export { db, getFirebaseAuth };
+export const getFirebaseAuth = getAuthInstance;
+export { db };
 export default app;

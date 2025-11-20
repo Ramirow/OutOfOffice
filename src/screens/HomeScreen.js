@@ -10,6 +10,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 import EventEnrollmentService from '../services/EventEnrollmentService';
+import CustomEventService from '../services/CustomEventService';
 import HomeTab from './HomeTab';
 import UpcomingEventsTab from './UpcomingEventsTab';
 import AvailableEventsTab from './AvailableEventsTab';
@@ -22,12 +23,14 @@ const HomeScreen = () => {
   const [customEvents, setCustomEvents] = useState([]);
   const [showProfile, setShowProfile] = useState(false);
   const [loadingEnrollments, setLoadingEnrollments] = useState(true);
+  const [loadingCustomEvents, setLoadingCustomEvents] = useState(true);
   const { logout, user, isAdmin, isPremium, canAddEvents } = useAuth();
 
-  // Load enrolled events from Firestore when user logs in
+  // Load enrolled events and custom events from Firestore when user logs in
   useEffect(() => {
     if (user?.id) {
       loadEnrolledEvents();
+      loadCustomEvents();
     }
   }, [user?.id]);
 
@@ -47,11 +50,28 @@ const HomeScreen = () => {
     }
   };
 
+  // Load custom events from Firestore
+  const loadCustomEvents = async () => {
+    try {
+      setLoadingCustomEvents(true);
+      const events = await CustomEventService.getAllCustomEvents();
+      setCustomEvents(events);
+      console.log('Loaded custom events from Firestore:', events.length);
+    } catch (error) {
+      console.error('Error loading custom events:', error);
+      // Graceful degradation - continue with empty array
+      setCustomEvents([]);
+    } finally {
+      setLoadingCustomEvents(false);
+    }
+  };
+
   const handleLogout = async () => {
     try {
       await logout();
-      // Clear enrolled events on logout
+      // Clear enrolled events and custom events on logout
       setEnrolledEvents([]);
+      setCustomEvents([]);
       console.log('User logged out successfully');
     } catch (error) {
       console.error('Logout error:', error);
@@ -80,15 +100,22 @@ const HomeScreen = () => {
     }
   };
 
-  const handleAddCustomEvent = (newEvent) => {
-    const customEvent = {
-      ...newEvent,
-      isCustom: true,
-      addedBy: user.id,
-      addedAt: new Date().toISOString(),
-    };
-    
-    setCustomEvents(prev => [...prev, customEvent]);
+  const handleAddCustomEvent = async (newEvent) => {
+    try {
+      // Save to Firestore (cloud database)
+      const savedEvent = await CustomEventService.createCustomEvent(newEvent, user.id);
+      
+      // Update local state
+      setCustomEvents(prev => [...prev, savedEvent]);
+      
+      Alert.alert(
+        'Success!', 
+        `Event "${newEvent.title}" has been created and saved to the cloud!`
+      );
+    } catch (error) {
+      console.error('Error creating custom event:', error);
+      Alert.alert('Error', 'Failed to create event. Please try again.');
+    }
   };
 
   const handleTabChange = (tabName) => {
