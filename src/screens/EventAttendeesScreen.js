@@ -13,11 +13,13 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import Swiper from 'react-native-deck-swiper';
 import AttendeeService from '../services/AttendeeService';
+import { useAuth } from '../context/AuthContext';
 
 const { width, height } = Dimensions.get('window');
 
 const EventAttendeesScreen = ({ route, navigation }) => {
   const { event } = route.params;
+  const { user } = useAuth();
   const [attendees, setAttendees] = useState([]);
   const [loading, setLoading] = useState(true);
   const [swipedAttendees, setSwipedAttendees] = useState([]);
@@ -34,13 +36,23 @@ const EventAttendeesScreen = ({ route, navigation }) => {
       setLoading(true);
       const eventId = event.eventId || event.id?.toString() || `event_${event.id}`;
       
-      // Get stored attendees or initialize if they don't exist
+      // Get real enrolled users as attendees (exclude current user)
       const storedAttendees = await AttendeeService.initializeEventAttendees(
         eventId,
-        event.title || 'Event'
+        event.title || 'Event',
+        user?.id || null, // Pass current user ID to exclude them
+        false // Don't use mock data
       );
       
       setAttendees(storedAttendees);
+      
+      if (storedAttendees.length === 0) {
+        Alert.alert(
+          'No Attendees',
+          'There are no other attendees for this event yet. Check back later!',
+          [{ text: 'OK', onPress: () => navigation.goBack() }]
+        );
+      }
     } catch (error) {
       console.error('Error loading attendees:', error);
       Alert.alert('Error', 'Failed to load attendees. Please try again.');
@@ -51,12 +63,15 @@ const EventAttendeesScreen = ({ route, navigation }) => {
 
   const handleSwipeLeft = async (cardIndex) => {
     const attendee = attendees[cardIndex];
-    if (!attendee) return;
+    if (!attendee || !user) return;
     
     const eventId = event.eventId || event.id?.toString() || `event_${event.id}`;
     
     // Store the swipe action
     await AttendeeService.updateAttendeeAction(eventId, attendee.id, 'passed');
+    
+    // Track user's swipe
+    await AttendeeService.trackUserSwipe(eventId, user.id, attendee.id, 'passed');
     
     setSwipedAttendees(prev => [...prev, { ...attendee, action: 'passed' }]);
     console.log(`Passed on ${attendee.name}`);
@@ -64,12 +79,15 @@ const EventAttendeesScreen = ({ route, navigation }) => {
 
   const handleSwipeRight = async (cardIndex) => {
     const attendee = attendees[cardIndex];
-    if (!attendee) return;
+    if (!attendee || !user) return;
     
     const eventId = event.eventId || event.id?.toString() || `event_${event.id}`;
     
     // Store the swipe action
     await AttendeeService.updateAttendeeAction(eventId, attendee.id, 'liked');
+    
+    // Track user's swipe
+    await AttendeeService.trackUserSwipe(eventId, user.id, attendee.id, 'liked');
     
     setSwipedAttendees(prev => [...prev, { ...attendee, action: 'liked' }]);
     Alert.alert(

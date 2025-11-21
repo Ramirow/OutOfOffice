@@ -288,7 +288,6 @@ const AddEventModal = ({ visible, onClose, onAddEvent }) => {
                         mode="date"
                         display={Platform.OS === 'ios' ? 'spinner' : 'default'}
                         onChange={handleDateChange}
-                        minimumDate={new Date()}
                         textColor="#333"
                         accentColor="#007AFF"
                         themeVariant="light"

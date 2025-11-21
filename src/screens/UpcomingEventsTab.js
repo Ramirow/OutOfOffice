@@ -6,57 +6,100 @@ import {
   FlatList,
   Image,
   TouchableOpacity,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import AttendeeService from '../services/AttendeeService';
-
-// Default upcoming events data with actual dates
-const defaultUpcomingEvents = [
-  {
-    id: 1,
-    title: 'Team Building Workshop',
-    location: 'Conference Room A',
-    time: 'Today, 3:00 PM',
-    eventDate: new Date(), // Today's date
-    image: 'https://images.unsplash.com/photo-1542744173-8e7e53415bb0?w=400&h=200&fit=crop',
-    status: 'confirmed',
-    isDefault: true,
-    attendees: 25
-  },
-  {
-    id: 2,
-    title: 'Coffee Chat with Design Team',
-    location: 'Office Lounge',
-    time: 'Tomorrow, 10:00 AM',
-    eventDate: new Date(Date.now() + 24 * 60 * 60 * 1000), // Tomorrow
-    image: 'https://images.unsplash.com/photo-1521017432531-fbd92d768814?w=400&h=200&fit=crop',
-    status: 'pending',
-    isDefault: true,
-    attendees: 12
-  }
-];
+import { useAuth } from '../context/AuthContext';
+import EventEnrollmentService from '../services/EventEnrollmentService';
 
 const UpcomingEventsTab = ({ enrolledEvents = [] }) => {
   const navigation = useNavigation();
+  const { user } = useAuth();
   const [events, setEvents] = useState([]);
 
+  // Function to parse event date from various formats
+  const parseEventDate = (event) => {
+    // Try different date formats from event object
+    if (event.eventDate) {
+      return new Date(event.eventDate);
+    }
+    if (event.date) {
+      // Parse date string (e.g., "Dec 15, 2024")
+      const parsed = new Date(event.date);
+      if (!isNaN(parsed.getTime())) {
+        return parsed;
+      }
+    }
+    if (event.event?.date) {
+      const parsed = new Date(event.event.date);
+      if (!isNaN(parsed.getTime())) {
+        return parsed;
+      }
+    }
+    // If no valid date found, return null
+    return null;
+  };
+
   // Function to check if event date has passed
-  const isEventPassed = (eventDate) => {
+  const isEventPassed = (event) => {
+    const eventDate = parseEventDate(event);
     if (!eventDate) return false;
+    
     const now = new Date();
-    const event = new Date(eventDate);
-    return event < now;
+    // Set time to start of day for fair comparison
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const eventDay = new Date(eventDate.getFullYear(), eventDate.getMonth(), eventDate.getDate());
+    
+    // Event has passed if event date is before today
+    return eventDay < today;
   };
 
   // Function to update event status based on date
   const updateEventStatus = async (event) => {
-    if (event.status === 'confirmed' && isEventPassed(event.eventDate || event.date)) {
-      // Initialize attendees when event becomes attended
-      const eventId = event.id?.toString() || `event_${Date.now()}`;
+    // Skip if already marked as attended
+    if (event.status === 'attended') {
+      return event;
+    }
+
+    // Check if event date has passed
+    if (isEventPassed(event)) {
+      // Update status to attended in Firestore if enrolled
+      if (user?.id && event.id) {
+        try {
+          const eventId = event.id?.toString() || event.eventId?.toString() || event.event?.id?.toString();
+          if (eventId) {
+            // Update status in Firestore
+            await EventEnrollmentService.updateEventStatus(user.id, eventId, 'attended');
+            
+            // Initialize attendees when event becomes attended (use real users)
+            const attendees = await AttendeeService.initializeEventAttendees(
+              eventId, 
+              event.title || event.event?.title || 'Event',
+              user.id, // Exclude current user
+              false // Don't use mock data
+            );
+            
+            return { 
+              ...event, 
+              status: 'attended',
+              attendees: attendees.length,
+              eventId: eventId,
+            };
+          }
+        } catch (error) {
+          console.error('Error updating event status:', error);
+        }
+      }
+      
+      // If not enrolled or update failed, still mark as attended locally
+      const eventId = event.id?.toString() || event.eventId?.toString() || `event_${Date.now()}`;
       const attendees = await AttendeeService.initializeEventAttendees(
         eventId, 
-        event.title || 'Event'
+        event.title || event.event?.title || 'Event',
+        user?.id || null,
+        false
       );
       
       return { 
@@ -66,42 +109,54 @@ const UpcomingEventsTab = ({ enrolledEvents = [] }) => {
         eventId: eventId,
       };
     }
+    
+    // If date hasn't passed and status is not set, set to confirmed
+    if (!event.status || event.status === 'pending') {
+      return {
+        ...event,
+        status: 'confirmed'
+      };
+    }
+    
     return event;
   };
 
   // Effect to update events and their statuses
   useEffect(() => {
     const loadEvents = async () => {
-      // Update default events
-      const updatedDefaultEvents = await Promise.all(
-        defaultUpcomingEvents.map(async (event) => {
-          const eventId = event.id?.toString() || `default_${event.id}`;
-          const updated = await updateEventStatus(event);
-          // Get attendee count if event is attended
-          if (updated.status === 'attended') {
-            const count = await AttendeeService.getAttendeeCount(eventId);
-            return { ...updated, attendees: count || updated.attendees || 20, eventId };
-          }
-          return { ...updated, eventId };
-        })
-      );
+      // Only show enrolled events (no mock/default events)
+      if (enrolledEvents.length === 0) {
+        setEvents([]);
+        return;
+      }
 
-      // Update enrolled events
+      // Update enrolled events only
       const updatedEnrolledEvents = await Promise.all(
         enrolledEvents.map(async (event) => {
-          const eventId = event.id?.toString() || `enrolled_${event.id}`;
+          // Extract event ID - handle different formats
+          const eventId = event.id?.toString() || 
+                         event.eventId?.toString() || 
+                         event.event?.id?.toString() || 
+                         `enrolled_${Date.now()}`;
+          
+          // Update status based on date
           const updated = await updateEventStatus(event);
+          
           // Get attendee count if event is attended
-          if (updated.status === 'attended') {
+          if (updated.status === 'attended' && eventId) {
             const count = await AttendeeService.getAttendeeCount(eventId);
-            return { ...updated, attendees: count || updated.attendees || 20, eventId };
+            return { 
+              ...updated, 
+              attendees: count || updated.attendees || 0, 
+              eventId: eventId 
+            };
           }
-          return { ...updated, eventId };
+          
+          return { ...updated, eventId: eventId };
         })
       );
 
-      const allUpcomingEvents = [...updatedDefaultEvents, ...updatedEnrolledEvents];
-      setEvents(allUpcomingEvents);
+      setEvents(updatedEnrolledEvents);
     };
 
     loadEvents();
@@ -131,10 +186,38 @@ const UpcomingEventsTab = ({ enrolledEvents = [] }) => {
     return () => clearInterval(interval);
   }, [enrolledEvents]);
 
-  // Handle event press - navigate to attendees if attended
-  const handleEventPress = (event) => {
-    if (event.status === 'attended') {
-      navigation.navigate('EventAttendees', { event });
+  // Handle event press - check swipe status and navigate accordingly
+  const handleEventPress = async (event) => {
+    if (event.status === 'attended' && user) {
+      const eventId = event.eventId || event.id?.toString() || `event_${event.id}`;
+      
+      // Check if user has completed swiping
+      const hasCompletedSwiping = await AttendeeService.hasCompletedSwiping(eventId, user.id);
+      
+      if (hasCompletedSwiping) {
+        // User has completed swiping, check for matches
+        const matches = await AttendeeService.getUserMatches(eventId, user.id);
+        
+        if (matches && matches.length > 0) {
+          // Has matches, navigate to chat
+          navigation.navigate('Chat', { event, matches });
+        } else {
+          // No matches yet, show popup
+          Alert.alert(
+            'No Matches Yet',
+            'You haven\'t matched with anyone from this event yet. Keep swiping on other events to find connections!',
+            [
+              { text: 'OK', style: 'default' }
+            ]
+          );
+        }
+      } else {
+        // User hasn't completed swiping, navigate to swipe screen
+        navigation.navigate('EventAttendees', { event });
+      }
+    } else if (event.status === 'attended' && !user) {
+      // User not logged in (shouldn't happen, but handle gracefully)
+      Alert.alert('Error', 'Please log in to view attendees.');
     }
   };
 
@@ -150,22 +233,28 @@ const UpcomingEventsTab = ({ enrolledEvents = [] }) => {
       <Image source={{ uri: item.image }} style={styles.upcomingEventImage} />
       <View style={styles.upcomingEventDetails}>
         <View style={styles.eventHeader}>
-          <Text style={styles.upcomingEventTitle}>{item.title}</Text>
-          {!item.isDefault && (
-            <View style={styles.enrolledBadge}>
-              <Text style={styles.enrolledBadgeText}>ENROLLED</Text>
-            </View>
-          )}
+          <Text style={styles.upcomingEventTitle}>{item.title || item.event?.title}</Text>
+          <View style={styles.enrolledBadge}>
+            <Text style={styles.enrolledBadgeText}>ENROLLED</Text>
+          </View>
         </View>
         
         <View style={styles.upcomingEventRow}>
           <Ionicons name="location" size={16} color="#666" />
-          <Text style={styles.upcomingEventText}>{item.location}</Text>
+          <Text style={styles.upcomingEventText}>{item.location || item.event?.location}</Text>
         </View>
-        <View style={styles.upcomingEventRow}>
-          <Ionicons name="time" size={16} color="#666" />
-          <Text style={styles.upcomingEventText}>{item.time}</Text>
-        </View>
+        {(item.date || item.event?.date) && (
+          <View style={styles.upcomingEventRow}>
+            <Ionicons name="calendar" size={16} color="#666" />
+            <Text style={styles.upcomingEventText}>{item.date || item.event?.date}</Text>
+          </View>
+        )}
+        {(item.time || item.event?.time) && (
+          <View style={styles.upcomingEventRow}>
+            <Ionicons name="time" size={16} color="#666" />
+            <Text style={styles.upcomingEventText}>{item.time || item.event?.time}</Text>
+          </View>
+        )}
         
         {item.category && (
           <View style={styles.upcomingEventRow}>
@@ -222,7 +311,14 @@ const UpcomingEventsTab = ({ enrolledEvents = [] }) => {
         <FlatList
           data={events}
           renderItem={renderEventItem}
-          keyExtractor={(item) => `${item.id}-${item.isDefault ? 'default' : 'enrolled'}`}
+          keyExtractor={(item, index) => {
+            // Create unique key using event ID and index
+            const itemId = item.id?.toString() || 
+                          item.eventId?.toString() || 
+                          item.event?.id?.toString() || 
+                          `event_${index}`;
+            return `enrolled_${itemId}_${index}`;
+          }}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.upcomingEventsList}
         />

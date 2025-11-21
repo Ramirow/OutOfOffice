@@ -81,6 +81,38 @@ const HomeScreen = () => {
 
   const handleEnrollEvent = async (event) => {
     try {
+      // Get event ID (handle different formats)
+      const eventId = event.id?.toString() || event.eventId?.toString() || event.id || Date.now().toString();
+      
+      // Check if user is already enrolled in this event
+      const isAlreadyEnrolled = await EventEnrollmentService.isUserEnrolled(user.id, eventId);
+      
+      if (isAlreadyEnrolled) {
+        Alert.alert(
+          'Already Enrolled', 
+          `You're already enrolled in "${event.title}". Check your Upcoming Events tab.`
+        );
+        return;
+      }
+
+      // Check if already in local state (double check)
+      // Match on various ID formats
+      const alreadyInLocalState = enrolledEvents.some(e => {
+        const enrolledEventId = e.id?.toString() || 
+                                e.eventId?.toString() || 
+                                e.event?.id?.toString() ||
+                                e.eventId;
+        return enrolledEventId === eventId.toString();
+      });
+      
+      if (alreadyInLocalState) {
+        Alert.alert(
+          'Already Enrolled', 
+          `You're already enrolled in "${event.title}". Check your Upcoming Events tab.`
+        );
+        return;
+      }
+
       // Save to Firestore (cloud database)
       const enrolledEvent = await EventEnrollmentService.enrollUserInEvent(
         user.id,
@@ -92,11 +124,20 @@ const HomeScreen = () => {
       
       Alert.alert(
         'Enrolled Successfully!', 
-        `You've been enrolled in "${event.title}". This will be saved permanently.`
+        `You've been enrolled in "${event.title}". This will be saved permanently. Check your Upcoming Events tab.`
       );
     } catch (error) {
       console.error('Error enrolling in event:', error);
-      Alert.alert('Error', 'Failed to enroll in event. Please try again.');
+      
+      // Check if error is due to duplicate enrollment
+      if (error.message?.includes('already enrolled') || error.message?.includes('duplicate')) {
+        Alert.alert(
+          'Already Enrolled', 
+          `You're already enrolled in "${event.title}". Check your Upcoming Events tab.`
+        );
+      } else {
+        Alert.alert('Error', 'Failed to enroll in event. Please try again.');
+      }
     }
   };
 
@@ -161,6 +202,7 @@ const HomeScreen = () => {
             onEnrollEvent={handleEnrollEvent}
             customEvents={customEvents}
             onAddCustomEvent={handleAddCustomEvent}
+            enrolledEvents={enrolledEvents}
           />
         );
       case 'upcoming':

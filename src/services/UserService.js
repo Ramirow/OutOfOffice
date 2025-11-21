@@ -148,18 +148,40 @@ class UserService {
   static async migrateInitialUsers(initialUsers) {
     try {
       const migrationPromises = initialUsers.map(async (user) => {
-        const existingUser = await this.getUserById(user.id);
-        if (!existingUser) {
-          await this.createUser(user);
-          console.log(`Migrated user: ${user.email}`);
+        // Check by email first (more reliable)
+        const existingUserByEmail = await this.getUserByEmail(user.email);
+        
+        // Normalize email
+        const normalizedUser = {
+          ...user,
+          email: user.email.toLowerCase(),
+        };
+        
+        if (!existingUserByEmail) {
+          // User doesn't exist, create it
+          await this.createUser(normalizedUser);
+          console.log(`✅ Migrated user: ${normalizedUser.email} (ID: ${normalizedUser.id})`);
+        } else {
+          // User exists - always update password to ensure it matches the hash function
+          // Use the actual user ID from Firestore (not the expected one)
+          const actualUserId = existingUserByEmail.id;
+          
+          // Always update password during migration to fix any mismatches
+          await this.updateUser(actualUserId, { password: normalizedUser.password });
+          console.log(`🔄 Updated password for user: ${normalizedUser.email} (ID: ${actualUserId})`);
+          
+          // Check if user ID matches expected (warning only)
+          if (actualUserId !== normalizedUser.id) {
+            console.log(`⚠️ User ID mismatch for ${normalizedUser.email}. Expected: ${normalizedUser.id}, Found: ${actualUserId} (using found ID)`);
+          }
         }
       });
       
       await Promise.all(migrationPromises);
-      console.log('Initial users migration completed');
+      console.log('✅ Initial users migration completed');
       return true;
     } catch (error) {
-      console.error('Error migrating initial users:', error);
+      console.error('❌ Error migrating initial users:', error);
       return false;
     }
   }

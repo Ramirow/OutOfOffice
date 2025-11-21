@@ -16,7 +16,7 @@ import { useAuth } from '../context/AuthContext';
 import AddEventModal from '../components/AddEventModal';
 import EventService from '../services/EventService';
 
-const AvailableEventsTab = ({ onEnrollEvent, customEvents = [], onAddCustomEvent }) => {
+const AvailableEventsTab = ({ onEnrollEvent, customEvents = [], onAddCustomEvent, enrolledEvents = [] }) => {
   const { canAddEvents } = useAuth();
   const [showAddModal, setShowAddModal] = useState(false);
   const [apiEvents, setApiEvents] = useState([]);
@@ -51,9 +51,8 @@ const AvailableEventsTab = ({ onEnrollEvent, customEvents = [], onAddCustomEvent
     } catch (error) {
       console.error('Error loading events:', error);
       setError('Failed to load events. Please try again.');
-      // Fallback to mock events
-      const fallbackEvents = EventService.getMockEvents();
-      setApiEvents(fallbackEvents);
+      // Return empty array instead of mock events
+      setApiEvents([]);
     } finally {
       setLoading(false);
     }
@@ -84,11 +83,23 @@ const AvailableEventsTab = ({ onEnrollEvent, customEvents = [], onAddCustomEvent
   };
 
   const handleEnrollInEvent = (event) => {
-    onEnrollEvent(event);
-    Alert.alert(
-      'Enrolled Successfully!', 
-      `You've been enrolled in "${event.title}". Check your Upcoming Events tab.`
+    // Check if already enrolled (double check before calling parent)
+    const isEnrolled = enrolledEvents.some(
+      e => (e.id?.toString() === event.id?.toString()) || 
+           (e.eventId?.toString() === event.id?.toString()) ||
+           (e.event?.id?.toString() === event.id?.toString())
     );
+    
+    if (isEnrolled) {
+      Alert.alert(
+        'Already Enrolled', 
+        `You're already enrolled in "${event.title}". Check your Upcoming Events tab.`
+      );
+      return;
+    }
+    
+    // Call parent handler (which will also check)
+    onEnrollEvent(event);
   };
 
   const handleAddEvent = (newEvent) => {
@@ -97,8 +108,28 @@ const AvailableEventsTab = ({ onEnrollEvent, customEvents = [], onAddCustomEvent
     Alert.alert('Success', 'Event created successfully!');
   };
 
-  // Combine API events and custom events
-  const allEvents = [...apiEvents, ...customEvents];
+  // Get enrolled event IDs to filter them out (normalize all formats)
+  const enrolledEventIds = enrolledEvents.map(e => {
+    const id = e.id?.toString() || e.eventId?.toString() || e.event?.id?.toString() || e.eventId;
+    return id ? id.toString() : null;
+  }).filter(Boolean);
+  
+  // Filter custom events by selected category (if not 'All')
+  const filteredCustomEvents = selectedCategory === 'All' 
+    ? customEvents 
+    : customEvents.filter(event => {
+        // Case-insensitive category matching
+        const eventCategory = (event.category || '').toLowerCase();
+        const selectedCategoryLower = selectedCategory.toLowerCase();
+        return eventCategory === selectedCategoryLower;
+      });
+  
+  // Combine API events and custom events, then filter out enrolled events
+  const allEvents = [...apiEvents, ...filteredCustomEvents].filter(event => {
+    const eventId = (event.id?.toString() || event.eventId?.toString() || event.id || '').toString();
+    // Filter out enrolled events - check exact match
+    return !enrolledEventIds.includes(eventId);
+  });
 
   // Filter events based on search query
   const filteredEvents = allEvents.filter(event =>
@@ -285,7 +316,12 @@ const AvailableEventsTab = ({ onEnrollEvent, customEvents = [], onAddCustomEvent
     <View style={styles.container}>
       <FlatList
         data={filteredEvents}
-        keyExtractor={(item) => item.id.toString()}
+        keyExtractor={(item, index) => {
+          // Create unique key: use id if available, otherwise use index with type
+          const eventId = item.id?.toString() || `event_${index}`;
+          const eventType = item.isCustom ? 'custom' : (item.isFromAPI ? 'api' : 'default');
+          return `${eventType}_${eventId}`;
+        }}
         renderItem={renderEventCard}
         ListHeaderComponent={() => (
           <>

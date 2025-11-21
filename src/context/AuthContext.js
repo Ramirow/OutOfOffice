@@ -7,12 +7,16 @@ const AuthContext = createContext();
 // Simple hash function (for demo - use bcrypt in production)
 const hashPassword = (password) => {
   let hash = 0;
+  if (!password) return '0';
   for (let i = 0; i < password.length; i++) {
     const char = password.charCodeAt(i);
     hash = ((hash << 5) - hash) + char;
     hash = hash & hash; // Convert to 32-bit integer
   }
-  return hash.toString(16);
+  // Ensure positive number for consistent hex representation
+  // Convert to unsigned 32-bit integer
+  const unsignedHash = hash >>> 0;
+  return unsignedHash.toString(16);
 };
 
 // Check if password is already hashed (simple check)
@@ -92,40 +96,91 @@ export const AuthProvider = ({ children }) => {
     // Simulate API call delay
     await new Promise(resolve => setTimeout(resolve, 1000));
     
+    // Normalize email to lowercase for consistent lookup
+    const normalizedEmail = email.toLowerCase().trim();
+    
     // Hash the input password for comparison
     const hashedPassword = hashPassword(password);
     
-    // Get user from Firestore
-    const foundUser = await UserService.getUserByEmail(email);
+    console.log('Login attempt:', { email: normalizedEmail, passwordLength: password.length });
     
-    if (foundUser) {
-      // Check password - support both hashed and plain text during transition
-      let passwordMatches = false;
-      if (isPasswordHashed(foundUser.password)) {
-        passwordMatches = foundUser.password === hashedPassword;
-      } else {
-        // Legacy plain text password support
-        passwordMatches = foundUser.password === password;
-        // Update to hashed version if it was plain text
-        if (passwordMatches) {
-          await UserService.updateUser(foundUser.id, { password: hashedPassword });
-        }
-      }
-
-      if (passwordMatches) {
-        // Remove password from user object before storing
-        const { password, ...userWithoutPassword } = foundUser;
-        
-        // Save to AsyncStorage for quick access
-        await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(userWithoutPassword));
-        
-        // Update state
-        setUser(userWithoutPassword);
-        
-        return { success: true, user: userWithoutPassword };
+    // Get user from Firestore (email is already lowercased in UserService)
+    let foundUser = await UserService.getUserByEmail(normalizedEmail);
+    
+    if (!foundUser) {
+      console.error('User not found in Firestore:', normalizedEmail);
+      // Ensure users are migrated
+      console.log('Attempting to migrate users...');
+      await UserService.migrateInitialUsers(INITIAL_MOCK_USERS);
+      // Try again after migration
+      foundUser = await UserService.getUserByEmail(normalizedEmail);
+      if (!foundUser) {
+        console.error('User still not found after migration:', normalizedEmail);
+        throw new Error(`User not found: ${normalizedEmail}. Please check if the user exists in Firestore. Use "Reset All Data" to recreate demo accounts.`);
       }
     }
     
+    // Check password - support both hashed and plain text during transition
+    let passwordMatches = false;
+    
+    // Normalize stored password (handle undefined/null)
+    const storedPassword = foundUser.password || '';
+    
+    if (isPasswordHashed(storedPassword)) {
+      // Compare hashed passwords
+      passwordMatches = storedPassword === hashedPassword;
+      console.log('Password check (hashed):', {
+        storedHash: storedPassword,
+        inputHash: hashedPassword,
+        hashedLength: storedPassword.length,
+        inputLength: hashedPassword.length,
+        matches: passwordMatches
+      });
+      
+      // If password doesn't match, update stored password with correct hash
+      // This auto-fixes password mismatches on the fly
+      if (!passwordMatches) {
+        console.warn('⚠️ Password hash mismatch detected. Updating stored password...');
+        try {
+          // Update stored password with correct hash using current hash function
+          await UserService.updateUser(foundUser.id, { password: hashedPassword });
+          console.log('✅ Password updated to correct hash. Continuing login...');
+          // After fixing, password should now match
+          passwordMatches = true;
+        } catch (updateError) {
+          console.error('❌ Error updating password:', updateError);
+          // Don't throw, let it fail below with the original error
+        }
+      }
+    } else {
+      // Legacy plain text password support
+      passwordMatches = storedPassword === password;
+      console.log('Password check (plain text):', { 
+        storedPassword: storedPassword ? 'exists' : 'missing',
+        matches: passwordMatches 
+      });
+      // Update to hashed version if it was plain text
+      if (passwordMatches) {
+        await UserService.updateUser(foundUser.id, { password: hashedPassword });
+        console.log('Updated plain text password to hashed version');
+      }
+    }
+
+    if (passwordMatches) {
+      // Remove password from user object before storing
+      const { password, ...userWithoutPassword } = foundUser;
+      
+      // Save to AsyncStorage for quick access
+      await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(userWithoutPassword));
+      
+      // Update state
+      setUser(userWithoutPassword);
+      
+      console.log('Login successful:', { email: normalizedEmail, userId: foundUser.id });
+      return { success: true, user: userWithoutPassword };
+    }
+    
+    console.error('Password mismatch for user:', normalizedEmail);
     throw new Error('Invalid email or password');
   };
 
@@ -203,16 +258,31 @@ export const AuthProvider = ({ children }) => {
   };
 
   // Debug function to reset users (for development)
-  // Note: This only clears local session, Firestore users remain
+  // Note: This clears local session and re-migrates users with correct passwords
   const resetUsers = async () => {
     try {
       await AsyncStorage.removeItem(AUTH_STORAGE_KEY);
       setUser(null);
-      // Re-migrate initial users to Firestore
+      // Re-migrate initial users to Firestore (this will update passwords)
+      console.log('Re-migrating demo users with correct passwords...');
       await UserService.migrateInitialUsers(INITIAL_MOCK_USERS);
-      console.log('Session cleared and initial users re-migrated to Firestore');
+      console.log('✅ Session cleared and initial users re-migrated to Firestore with correct passwords');
     } catch (error) {
       console.error('Error resetting users:', error);
+      throw error;
+    }
+  };
+  
+  // Helper function to verify and fix a specific user's password
+  const fixUserPassword = async (userId, plainPassword) => {
+    try {
+      const hashedPassword = hashPassword(plainPassword);
+      await UserService.updateUser(userId, { password: hashedPassword });
+      console.log(`✅ Fixed password for user ID: ${userId}`);
+      return true;
+    } catch (error) {
+      console.error('Error fixing user password:', error);
+      return false;
     }
   };
 

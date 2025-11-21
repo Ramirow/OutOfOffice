@@ -11,11 +11,17 @@ class EventService {
   }
 
   // Fetch events from multiple sources
-  static async fetchEvents(location = DEFAULT_LOCATION.city, category = '') {
+  static async fetchEvents(location = null, category = '') {
     try {
-      console.log('Fetching events for:', location, category);
+      // Only log location if provided
+      if (location) {
+        console.log('Fetching events for:', location, category || '');
+      } else {
+        console.log('Fetching events (no location specified)', category || '');
+      }
       
-      if (this.hasValidAPIConfig()) {
+      // Only fetch from APIs if location is provided and API keys are configured
+      if (location && this.hasValidAPIConfig()) {
         // Try to fetch from real APIs
         const events = await this.fetchFromAPIs(location, category);
         if (events.length > 0) {
@@ -23,19 +29,28 @@ class EventService {
         }
       }
       
-      // Fallback to enhanced mock events
-      console.log('Using mock events (no API keys configured)');
-      return this.getEnhancedMockEvents(location, category);
+      // Return empty array if no location or no API keys configured
+      if (!location) {
+        console.log('No location specified. Returning empty events array (showing only custom events).');
+      } else {
+        console.log('No API keys configured. Returning empty events array.');
+      }
+      return [];
     } catch (error) {
       console.error('Error fetching events:', error);
-      // Always fallback to mock events on error
-      return this.getEnhancedMockEvents(location, category);
+      // Return empty array on error (no mock events)
+      return [];
     }
   }
 
-  // Fetch from real APIs (when configured)
+  // Fetch from real APIs (when configured and location provided)
   static async fetchFromAPIs(location, category) {
     const events = [];
+    
+    // Don't fetch from APIs if no location is provided
+    if (!location) {
+      return [];
+    }
     
     try {
       // Try Eventbrite API
@@ -377,14 +392,14 @@ class EventService {
     };
   }
 
-  // Get events by category
-  static async getEventsByCategory(category, location = DEFAULT_LOCATION.city) {
+  // Get events by category (no location required - only custom events)
+  static async getEventsByCategory(category, location = null) {
     const allEvents = await this.fetchEvents(location, category);
     return allEvents.map(event => this.normalizeEvent(event));
   }
 
-  // Search events by keyword
-  static async searchEvents(keyword, location = DEFAULT_LOCATION.city) {
+  // Search events by keyword (no location required - only custom events)
+  static async searchEvents(keyword, location = null) {
     const allEvents = await this.fetchEvents(location);
     const normalizedEvents = allEvents.map(event => this.normalizeEvent(event));
     
