@@ -58,17 +58,25 @@ const UpcomingEventsTab = ({ enrolledEvents = [] }) => {
 
   // Function to update event status based on date
   const updateEventStatus = async (event) => {
-    // Skip if already marked as attended
-    if (event.status === 'attended') {
-      return event;
-    }
+    // Check if event date has passed FIRST (before checking current status)
+    const eventDate = parseEventDate(event);
+    const hasPassed = eventDate && isEventPassed(event);
+    
+    // If event date has passed, always set status to 'attended'
+    if (hasPassed) {
+      // Skip if already marked as attended (optimization)
+      if (event.status === 'attended') {
+        return event;
+      }
 
-    // Check if event date has passed
-    if (isEventPassed(event)) {
       // Update status to attended in Firestore if enrolled
-      if (user?.id && event.id) {
+      if (user?.id) {
         try {
-          const eventId = event.id?.toString() || event.eventId?.toString() || event.event?.id?.toString();
+          const eventId = event.id?.toString() || 
+                         event.eventId?.toString() || 
+                         event.event?.id?.toString() ||
+                         event.id;
+          
           if (eventId) {
             // Update status in Firestore
             await EventEnrollmentService.updateEventStatus(user.id, eventId, 'attended');
@@ -94,7 +102,11 @@ const UpcomingEventsTab = ({ enrolledEvents = [] }) => {
       }
       
       // If not enrolled or update failed, still mark as attended locally
-      const eventId = event.id?.toString() || event.eventId?.toString() || `event_${Date.now()}`;
+      const eventId = event.id?.toString() || 
+                     event.eventId?.toString() || 
+                     event.event?.id?.toString() ||
+                     `event_${Date.now()}`;
+      
       const attendees = await AttendeeService.initializeEventAttendees(
         eventId, 
         event.title || event.event?.title || 'Event',
@@ -110,15 +122,17 @@ const UpcomingEventsTab = ({ enrolledEvents = [] }) => {
       };
     }
     
-    // If date hasn't passed and status is not set, set to confirmed
-    if (!event.status || event.status === 'pending') {
-      return {
-        ...event,
-        status: 'confirmed'
-      };
+    // Event date is in the future - set status to 'confirmed'
+    // If status is already 'confirmed', keep it
+    if (event.status === 'confirmed') {
+      return event;
     }
     
-    return event;
+    // If status is not set or is 'pending', set to 'confirmed'
+    return {
+      ...event,
+      status: 'confirmed'
+    };
   };
 
   // Effect to update events and their statuses
@@ -188,8 +202,21 @@ const UpcomingEventsTab = ({ enrolledEvents = [] }) => {
 
   // Handle event press - check swipe status and navigate accordingly
   const handleEventPress = async (event) => {
-    if (event.status === 'attended' && user) {
-      const eventId = event.eventId || event.id?.toString() || `event_${event.id}`;
+    // Check if event date has passed (even if status hasn't updated yet)
+    const eventDate = parseEventDate(event);
+    const hasPassed = eventDate && isEventPassed(event);
+    
+    // Allow navigation if event is attended OR if date has passed
+    if ((event.status === 'attended' || hasPassed) && user) {
+      // Ensure status is updated if date has passed
+      let updatedEvent = event;
+      if (hasPassed && event.status !== 'attended') {
+        updatedEvent = await updateEventStatus(event);
+      }
+      
+      const eventId = updatedEvent.eventId || 
+                     updatedEvent.id?.toString() || 
+                     `event_${updatedEvent.id}`;
       
       // Check if user has completed swiping
       const hasCompletedSwiping = await AttendeeService.hasCompletedSwiping(eventId, user.id);
@@ -200,7 +227,7 @@ const UpcomingEventsTab = ({ enrolledEvents = [] }) => {
         
         if (matches && matches.length > 0) {
           // Has matches, navigate to chat
-          navigation.navigate('Chat', { event, matches });
+          navigation.navigate('Chat', { event: updatedEvent, matches });
         } else {
           // No matches yet, show popup
           Alert.alert(
@@ -213,11 +240,18 @@ const UpcomingEventsTab = ({ enrolledEvents = [] }) => {
         }
       } else {
         // User hasn't completed swiping, navigate to swipe screen
-        navigation.navigate('EventAttendees', { event });
+        navigation.navigate('EventAttendees', { event: updatedEvent });
       }
-    } else if (event.status === 'attended' && !user) {
+    } else if ((event.status === 'attended' || hasPassed) && !user) {
       // User not logged in (shouldn't happen, but handle gracefully)
       Alert.alert('Error', 'Please log in to view attendees.');
+    } else if (event.status === 'confirmed') {
+      // Future event - show info message
+      Alert.alert(
+        'Event Not Started',
+        'This event hasn\'t started yet. You can swipe and connect with attendees after the event date.',
+        [{ text: 'OK', style: 'default' }]
+      );
     }
   };
 
@@ -225,10 +259,10 @@ const UpcomingEventsTab = ({ enrolledEvents = [] }) => {
     <TouchableOpacity 
       style={[
         styles.upcomingEventCard,
-        item.status === 'attended' && styles.attendedEventCard
+        (item.status === 'attended' || isEventPassed(item)) && styles.attendedEventCard
       ]}
       onPress={() => handleEventPress(item)}
-      disabled={item.status !== 'attended'}
+      disabled={false} // Allow all events to be clickable (handleEventPress will check status)
     >
       <Image source={{ uri: item.image }} style={styles.upcomingEventImage} />
       <View style={styles.upcomingEventDetails}>
@@ -273,18 +307,21 @@ const UpcomingEventsTab = ({ enrolledEvents = [] }) => {
         <View style={[
           styles.statusBadge, 
           { 
-            backgroundColor: item.status === 'confirmed' ? '#4CAF50' : 
-                           item.status === 'attended' ? '#2196F3' : '#FF9800' 
+            backgroundColor: (item.status === 'attended' || isEventPassed(item)) ? '#2196F3' :
+                           item.status === 'confirmed' ? '#4CAF50' : '#FF9800' 
           }
         ]}>
-          <Text style={styles.statusText}>{item.status.toUpperCase()}</Text>
+          <Text style={styles.statusText}>
+            {(item.status === 'attended' || isEventPassed(item)) ? 'ATTENDED' : 
+             item.status ? item.status.toUpperCase() : 'CONFIRMED'}
+          </Text>
         </View>
 
-        {item.status === 'attended' && (
+        {(item.status === 'attended' || isEventPassed(item)) && (
           <View style={styles.attendeesInfo}>
             <Ionicons name="people" size={16} color="#2196F3" />
             <Text style={styles.attendeesText}>
-              {item.attendees || 20} attendees • Tap to swipe & connect
+              {item.attendees || 0} attendees • Tap to swipe & connect
             </Text>
           </View>
         )}
