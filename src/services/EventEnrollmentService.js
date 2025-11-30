@@ -80,7 +80,8 @@ class EventEnrollmentService {
           : (data.enrolledAt?.toDate?.()?.toISOString() || data.enrolledAt);
         
         enrolledEvents.push({
-          id: docSnapshot.id,
+          id: docSnapshot.id, // Enrollment document ID (userId_eventId)
+          eventId: data.eventId, // Actual event ID (for status updates)
           ...data.event,
           enrolledAt: enrolledAt,
           status: data.status || 'confirmed',

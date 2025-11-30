@@ -14,6 +14,7 @@ import CustomEventService from '../services/CustomEventService';
 import HomeTab from './HomeTab';
 import UpcomingEventsTab from './UpcomingEventsTab';
 import AvailableEventsTab from './AvailableEventsTab';
+import MessengerTab from './MessengerTab';
 import AboutUsTab from './AboutUsTab';
 import ProfileScreen from './ProfileScreen';
 
@@ -207,6 +208,8 @@ const HomeScreen = () => {
         );
       case 'upcoming':
         return <UpcomingEventsTab enrolledEvents={enrolledEvents} />;
+      case 'messenger':
+        return <MessengerTab />;
       case 'about':
         return <AboutUsTab />;
       default:
@@ -289,6 +292,20 @@ const HomeScreen = () => {
               <Text style={styles.badgeText}>{enrolledEvents.length}</Text>
             </View>
           )}
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.tabButton, activeTab === 'messenger' && styles.activeTab]}
+          onPress={() => setActiveTab('messenger')}
+        >
+          <Ionicons 
+            name="chatbubbles" 
+            size={18} 
+            color={activeTab === 'messenger' ? '#007AFF' : '#666'} 
+          />
+          <Text style={[styles.tabText, activeTab === 'messenger' && styles.activeTabText]}>
+            MESSAGES
+          </Text>
         </TouchableOpacity>
 
         <TouchableOpacity

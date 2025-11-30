@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,50 +10,97 @@ import {
   SafeAreaView,
   KeyboardAvoidingView,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 import AttendeeService from '../services/AttendeeService';
+import ChatService from '../services/ChatService';
 
 const ChatScreen = ({ route, navigation }) => {
-  const { event, matches } = route.params;
+  const { event, matches, chatId: initialChatId, otherUser: initialOtherUser } = route.params || {};
   const { user } = useAuth();
-  const [selectedMatch, setSelectedMatch] = useState(matches && matches.length > 0 ? matches[0] : null);
+  const [selectedMatch, setSelectedMatch] = useState(
+    initialOtherUser || (matches && matches.length > 0 ? matches[0] : null)
+  );
   const [messages, setMessages] = useState([]);
   const [messageText, setMessageText] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [currentChatId, setCurrentChatId] = useState(initialChatId);
+  const flatListRef = useRef(null);
 
-  // Initialize messages for demo
+  // Load or create chat and load messages
   useEffect(() => {
-    if (selectedMatch) {
-      // Initialize with demo messages
-      setMessages([
-        {
-          id: '1',
-          text: `Hi ${selectedMatch.name}! It was great meeting you at ${event.title}!`,
-          senderId: user?.id || 'current',
-          timestamp: new Date(Date.now() - 3600000).toISOString(),
-        },
-        {
-          id: '2',
-          text: 'Hey! Great to meet you too. Would love to connect further!',
-          senderId: selectedMatch.id,
-          timestamp: new Date(Date.now() - 3300000).toISOString(),
-        },
-      ]);
-    }
+    const loadChat = async () => {
+      if (!selectedMatch || !user?.id || !event) {
+        setLoading(false);
+        return;
+      }
+
+      try {
+        setLoading(true);
+        const eventId = event.id?.toString() || event.eventId?.toString() || event.id;
+        
+        // Get or create chat
+        // Use userId if available (for real users), otherwise fall back to id
+        const otherUserId = selectedMatch.userId || selectedMatch.id;
+        const chatId = await ChatService.getOrCreateChat(
+          user.id,
+          otherUserId,
+          eventId,
+          event
+        );
+        setCurrentChatId(chatId);
+
+        // Load messages
+        const chatMessages = await ChatService.getChatMessages(chatId);
+        setMessages(chatMessages);
+
+        // Mark messages as read
+        await ChatService.markMessagesAsRead(chatId, user.id);
+      } catch (error) {
+        console.error('Error loading chat:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadChat();
   }, [selectedMatch, event, user]);
 
-  const handleSendMessage = () => {
-    if (messageText.trim() && selectedMatch) {
-      const newMessage = {
-        id: Date.now().toString(),
-        text: messageText.trim(),
-        senderId: user?.id || 'current',
-        timestamp: new Date().toISOString(),
-      };
-      
+  const handleSendMessage = async () => {
+    if (!messageText.trim() || !selectedMatch || !currentChatId || !user?.id || sending) {
+      return;
+    }
+
+    try {
+      setSending(true);
+      const text = messageText.trim();
+      setMessageText(''); // Clear input immediately for better UX
+
+      // Send message to Firestore
+      const newMessage = await ChatService.sendMessage(
+        currentChatId,
+        user.id,
+        text
+      );
+
+      // Add to local state
       setMessages(prev => [...prev, newMessage]);
-      setMessageText('');
+
+      // Scroll to bottom
+      setTimeout(() => {
+        flatListRef.current?.scrollToEnd({ animated: true });
+      }, 100);
+
+      console.log('Message sent successfully. Chat ID:', currentChatId, 'Message:', text);
+    } catch (error) {
+      console.error('Error sending message:', error);
+      // Restore message text on error
+      setMessageText(messageText);
+    } finally {
+      setSending(false);
     }
   };
 
@@ -148,13 +195,22 @@ const ChatScreen = ({ route, navigation }) => {
       </View>
 
       {/* Messages */}
-      <FlatList
-        data={messages}
-        renderItem={renderMessage}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.messagesList}
-        inverted={false}
-      />
+      {loading ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#007AFF" />
+          <Text style={styles.loadingText}>Loading messages...</Text>
+        </View>
+      ) : (
+        <FlatList
+          ref={flatListRef}
+          data={messages}
+          renderItem={renderMessage}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.messagesList}
+          inverted={false}
+          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+        />
+      )}
 
       {/* Message Input */}
       <KeyboardAvoidingView
@@ -174,15 +230,19 @@ const ChatScreen = ({ route, navigation }) => {
             maxLength={500}
           />
           <TouchableOpacity
-            style={[styles.sendButton, !messageText.trim() && styles.sendButtonDisabled]}
+            style={[styles.sendButton, (!messageText.trim() || sending) && styles.sendButtonDisabled]}
             onPress={handleSendMessage}
-            disabled={!messageText.trim()}
+            disabled={!messageText.trim() || sending}
           >
-            <Ionicons 
-              name="send" 
-              size={24} 
-              color={messageText.trim() ? "#fff" : "#ccc"} 
-            />
+            {sending ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Ionicons 
+                name="send" 
+                size={24} 
+                color={messageText.trim() ? "#fff" : "#ccc"} 
+              />
+            )}
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -338,6 +398,16 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#666',
     textAlign: 'center',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 16,
+    color: '#666',
   },
 });
 

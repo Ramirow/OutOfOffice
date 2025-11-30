@@ -22,23 +22,93 @@ const UpcomingEventsTab = ({ enrolledEvents = [] }) => {
   // Function to parse event date from various formats
   const parseEventDate = (event) => {
     // Try different date formats from event object
+    let dateValue = null;
+    
+    // Check various possible date field locations
     if (event.eventDate) {
-      return new Date(event.eventDate);
+      dateValue = event.eventDate;
+    } else if (event.date) {
+      dateValue = event.date;
+    } else if (event.event?.date) {
+      dateValue = event.event.date;
     }
-    if (event.date) {
-      // Parse date string (e.g., "Dec 15, 2024")
-      const parsed = new Date(event.date);
-      if (!isNaN(parsed.getTime())) {
-        return parsed;
+    
+    if (!dateValue) {
+      console.log('No date field found for event:', event.title || event.event?.title || 'Unknown');
+      return null;
+    }
+    
+    // Handle Firestore Timestamp objects
+    if (dateValue && typeof dateValue === 'object' && dateValue.toDate) {
+      const date = dateValue.toDate();
+      console.log(`Parsed Firestore Timestamp for "${event.title || event.event?.title}":`, date.toISOString());
+      return date;
+    }
+    
+    // Handle Date objects
+    if (dateValue instanceof Date) {
+      console.log(`Using Date object for "${event.title || event.event?.title}":`, dateValue.toISOString());
+      return dateValue;
+    }
+    
+    // Convert to string for parsing
+    const dateString = String(dateValue).trim();
+    console.log(`Attempting to parse date: "${dateString}" for event: "${event.title || event.event?.title}"`);
+    
+    // Try parsing common date formats
+    // Format 1: "Nov 23, 2025" or "Nov 23, 2024" (with comma and year)
+    const fullDateMatch = dateString.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2}),\s*(\d{4})$/i);
+    if (fullDateMatch) {
+      const month = fullDateMatch[1];
+      const day = parseInt(fullDateMatch[2]);
+      const year = parseInt(fullDateMatch[3]);
+      const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+      const monthIndex = monthNames.indexOf(month.toLowerCase());
+      if (monthIndex !== -1) {
+        const date = new Date(year, monthIndex, day);
+        console.log(`Parsed full date "${dateString}" for "${event.title || event.event?.title}":`, date.toISOString());
+        return date;
       }
     }
-    if (event.event?.date) {
-      const parsed = new Date(event.event.date);
-      if (!isNaN(parsed.getTime())) {
-        return parsed;
+    
+    // Format 2: "23 Nov 2024" or "23 Nov" (without comma)
+    const dateWithYearMatch = dateString.match(/^(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)(\s+(\d{4}))?$/i);
+    if (dateWithYearMatch) {
+      const day = parseInt(dateWithYearMatch[1]);
+      const month = dateWithYearMatch[2];
+      const year = dateWithYearMatch[4] ? parseInt(dateWithYearMatch[4]) : new Date().getFullYear();
+      const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+      const monthIndex = monthNames.indexOf(month.toLowerCase());
+      if (monthIndex !== -1) {
+        const date = new Date(year, monthIndex, day);
+        console.log(`Parsed date with year "${dateString}" for "${event.title || event.event?.title}":`, date.toISOString());
+        return date;
       }
     }
-    // If no valid date found, return null
+    
+    // Format 3: "Nov 23" (without year, assume current year)
+    const shortDateMatch = dateString.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2})$/i);
+    if (shortDateMatch) {
+      const currentYear = new Date().getFullYear();
+      const month = shortDateMatch[1];
+      const day = parseInt(shortDateMatch[2]);
+      const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+      const monthIndex = monthNames.indexOf(month.toLowerCase());
+      if (monthIndex !== -1) {
+        const date = new Date(currentYear, monthIndex, day);
+        console.log(`Parsed short date "${dateString}" for "${event.title || event.event?.title}":`, date.toISOString());
+        return date;
+      }
+    }
+    
+    // Format 4: Try native Date parsing (handles ISO, standard formats)
+    const parsed = new Date(dateString);
+    if (!isNaN(parsed.getTime())) {
+      console.log(`Parsed via native Date "${dateString}" for "${event.title || event.event?.title}":`, parsed.toISOString());
+      return parsed;
+    }
+    
+    console.warn('Failed to parse date:', dateString, 'for event:', event.title || event.event?.title);
     return null;
   };
 
@@ -62,22 +132,31 @@ const UpcomingEventsTab = ({ enrolledEvents = [] }) => {
     const eventDate = parseEventDate(event);
     const hasPassed = eventDate && isEventPassed(event);
     
+    console.log(`Updating status for "${event.title || event.event?.title}":`, {
+      eventDate: eventDate?.toISOString(),
+      hasPassed,
+      currentStatus: event.status
+    });
+    
     // If event date has passed, always set status to 'attended'
     if (hasPassed) {
       // Skip if already marked as attended (optimization)
       if (event.status === 'attended') {
+        console.log(`Event "${event.title || event.event?.title}" already marked as attended`);
         return event;
       }
+
+      console.log(`Event "${event.title || event.event?.title}" date has passed. Updating to 'attended'...`);
 
       // Update status to attended in Firestore if enrolled
       if (user?.id) {
         try {
-          const eventId = event.id?.toString() || 
-                         event.eventId?.toString() || 
-                         event.event?.id?.toString() ||
-                         event.id;
+          const eventId = event.eventId?.toString() || 
+                         event.id?.toString() ||
+                         event.event?.id?.toString();
           
           if (eventId) {
+            console.log(`Updating Firestore status for eventId: ${eventId}, userId: ${user.id}`);
             // Update status in Firestore
             await EventEnrollmentService.updateEventStatus(user.id, eventId, 'attended');
             
@@ -89,12 +168,16 @@ const UpcomingEventsTab = ({ enrolledEvents = [] }) => {
               false // Don't use mock data
             );
             
+            console.log(`Event "${event.title || event.event?.title}" updated to 'attended' with ${attendees.length} attendees`);
+            
             return { 
               ...event, 
               status: 'attended',
               attendees: attendees.length,
               eventId: eventId,
             };
+          } else {
+            console.warn('No eventId found for event:', event.title || event.event?.title);
           }
         } catch (error) {
           console.error('Error updating event status:', error);
@@ -102,8 +185,8 @@ const UpcomingEventsTab = ({ enrolledEvents = [] }) => {
       }
       
       // If not enrolled or update failed, still mark as attended locally
-      const eventId = event.id?.toString() || 
-                     event.eventId?.toString() || 
+      const eventId = event.eventId?.toString() || 
+                     event.id?.toString() ||
                      event.event?.id?.toString() ||
                      `event_${Date.now()}`;
       
@@ -147,11 +230,18 @@ const UpcomingEventsTab = ({ enrolledEvents = [] }) => {
       // Update enrolled events only
       const updatedEnrolledEvents = await Promise.all(
         enrolledEvents.map(async (event) => {
-          // Extract event ID - handle different formats
-          const eventId = event.id?.toString() || 
-                         event.eventId?.toString() || 
-                         event.event?.id?.toString() || 
+          // Extract event ID - eventId is now included from getUserEnrolledEvents
+          const eventId = event.eventId?.toString() || 
+                         event.id?.toString() || 
+                         event.event?.id?.toString() ||
                          `enrolled_${Date.now()}`;
+          
+          console.log(`Processing event "${event.title || event.event?.title}":`, {
+            enrollmentId: event.id,
+            eventId: eventId,
+            date: event.date || event.event?.date,
+            status: event.status
+          });
           
           // Update status based on date
           const updated = await updateEventStatus(event);
@@ -198,25 +288,52 @@ const UpcomingEventsTab = ({ enrolledEvents = [] }) => {
     }, 60000); // Check every minute
 
     return () => clearInterval(interval);
-  }, [enrolledEvents]);
+  }, [enrolledEvents, user?.id]);
 
   // Handle event press - check swipe status and navigate accordingly
   const handleEventPress = async (event) => {
+    if (!user) {
+      Alert.alert('Error', 'Please log in to view attendees.');
+      return;
+    }
+
     // Check if event date has passed (even if status hasn't updated yet)
     const eventDate = parseEventDate(event);
     const hasPassed = eventDate && isEventPassed(event);
     
-    // Allow navigation if event is attended OR if date has passed
-    if ((event.status === 'attended' || hasPassed) && user) {
+    console.log(`Event press for "${event.title || event.event?.title}":`, {
+      hasPassed,
+      currentStatus: event.status,
+      eventDate: eventDate?.toISOString()
+    });
+    
+    // If event date has passed, treat it as attended regardless of stored status
+    if (hasPassed) {
       // Ensure status is updated if date has passed
       let updatedEvent = event;
-      if (hasPassed && event.status !== 'attended') {
+      if (event.status !== 'attended') {
+        console.log('Updating event status to attended on press...');
         updatedEvent = await updateEventStatus(event);
+        // Update local state immediately
+        setEvents(prev => prev.map(e => {
+          const eId = e.eventId?.toString() || e.id?.toString() || e.event?.id?.toString();
+          const uId = updatedEvent.eventId?.toString() || updatedEvent.id?.toString() || updatedEvent.event?.id?.toString();
+          return eId === uId ? updatedEvent : e;
+        }));
       }
       
       const eventId = updatedEvent.eventId || 
-                     updatedEvent.id?.toString() || 
-                     `event_${updatedEvent.id}`;
+                     updatedEvent.id?.toString() ||
+                     updatedEvent.event?.id?.toString() ||
+                     `event_${Date.now()}`;
+      
+      if (!eventId || eventId === `event_${Date.now()}`) {
+        console.error('Could not determine eventId for navigation');
+        Alert.alert('Error', 'Could not determine event ID. Please try again.');
+        return;
+      }
+      
+      console.log('Navigating to swipe screen for eventId:', eventId);
       
       // Check if user has completed swiping
       const hasCompletedSwiping = await AttendeeService.hasCompletedSwiping(eventId, user.id);
@@ -242,10 +359,7 @@ const UpcomingEventsTab = ({ enrolledEvents = [] }) => {
         // User hasn't completed swiping, navigate to swipe screen
         navigation.navigate('EventAttendees', { event: updatedEvent });
       }
-    } else if ((event.status === 'attended' || hasPassed) && !user) {
-      // User not logged in (shouldn't happen, but handle gracefully)
-      Alert.alert('Error', 'Please log in to view attendees.');
-    } else if (event.status === 'confirmed') {
+    } else {
       // Future event - show info message
       Alert.alert(
         'Event Not Started',
