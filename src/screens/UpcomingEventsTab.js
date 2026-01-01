@@ -343,8 +343,8 @@ const UpcomingEventsTab = ({ enrolledEvents = [] }) => {
         const matches = await AttendeeService.getUserMatches(eventId, user.id);
         
         if (matches && matches.length > 0) {
-          // Has matches, navigate to chat
-          navigation.navigate('Chat', { event: updatedEvent, matches });
+          // Has matches, navigate to EventChats screen to show all chats/matches
+          navigation.navigate('EventChats', { event: updatedEvent });
         } else {
           // No matches yet, show popup
           Alert.alert(

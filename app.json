@@ -13,7 +13,11 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.ramimourani.OutOfOfficeClone",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -21,8 +25,14 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.ramimourani.OutOfOfficeClone"
+      "package": "com.ramimourani.OutOfOfficeClone",
+      "permissions": [
+        "RECEIVE_BOOT_COMPLETED"
+      ]
     },
+    "plugins": [
+      "expo-notifications"
+    ],
     "web": {
       "favicon": "./assets/favicon.png"
     },

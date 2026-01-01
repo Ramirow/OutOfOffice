@@ -12,14 +12,17 @@ import {
   Platform,
   ActivityIndicator,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 import AttendeeService from '../services/AttendeeService';
 import ChatService from '../services/ChatService';
+import NotificationService from '../services/NotificationService';
 
 const ChatScreen = ({ route, navigation }) => {
   const { event, matches, chatId: initialChatId, otherUser: initialOtherUser } = route.params || {};
   const { user } = useAuth();
+  const insets = useSafeAreaInsets(); // Get safe area insets for proper bottom padding
   const [selectedMatch, setSelectedMatch] = useState(
     initialOtherUser || (matches && matches.length > 0 ? matches[0] : null)
   );
@@ -53,6 +56,9 @@ const ChatScreen = ({ route, navigation }) => {
         );
         setCurrentChatId(chatId);
 
+        // Set current chat in NotificationService to avoid notifications for this chat
+        NotificationService.setCurrentChatId(chatId);
+
         // Load messages
         const chatMessages = await ChatService.getChatMessages(chatId);
         setMessages(chatMessages);
@@ -67,6 +73,11 @@ const ChatScreen = ({ route, navigation }) => {
     };
 
     loadChat();
+
+    // Cleanup: Clear current chat ID when component unmounts or chat changes
+    return () => {
+      NotificationService.clearCurrentChatId();
+    };
   }, [selectedMatch, event, user]);
 
   const handleSendMessage = async () => {
@@ -214,10 +225,10 @@ const ChatScreen = ({ route, navigation }) => {
 
       {/* Message Input */}
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
-        <View style={styles.inputContainer}>
+        <View style={[styles.inputContainer, { paddingBottom: Math.max(insets.bottom, 10) }]}>
           <TouchableOpacity style={styles.attachmentButton}>
             <Ionicons name="attach" size={24} color="#666" />
           </TouchableOpacity>
@@ -350,10 +361,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingTop: 8,
     backgroundColor: '#fff',
     borderTopWidth: 1,
     borderTopColor: '#e0e0e0',
+    // paddingBottom will be set dynamically based on safe area insets
   },
   attachmentButton: {
     padding: 8,

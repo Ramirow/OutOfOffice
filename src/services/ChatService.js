@@ -77,10 +77,16 @@ class ChatService {
    */
   static async sendMessage(chatId, senderId, text) {
     try {
+      // Validate message text - don't send empty or null messages
+      const trimmedText = text?.trim();
+      if (!trimmedText || trimmedText.length === 0) {
+        throw new Error('Cannot send empty message');
+      }
+
       const messageData = {
         chatId: chatId,
         senderId: senderId,
-        text: text.trim(),
+        text: trimmedText,
         timestamp: Timestamp.now(),
         read: false,
       };
@@ -89,10 +95,10 @@ class ChatService {
       const messagesRef = collection(db, MESSAGES_COLLECTION);
       const messageDoc = await addDoc(messagesRef, messageData);
 
-      // Update chat's last message and timestamp
+      // Update chat's last message and timestamp (only if message is valid)
       const chatRef = doc(db, CHATS_COLLECTION, chatId);
       await updateDoc(chatRef, {
-        lastMessage: text.trim(),
+        lastMessage: trimmedText,
         lastMessageAt: Timestamp.now(),
         updatedAt: Timestamp.now(),
       });
@@ -146,73 +152,228 @@ class ChatService {
    * @param {string} userId - User ID
    * @returns {Promise<Array>} - Array of chats with last message info
    */
+  /**
+   * Extract actual user ID from event-based attendee ID
+   * e.g., "1763916921410_1" -> "1"
+   * @param {string} id - ID that might be event-based
+   * @returns {string} - Actual user ID
+   */
+  static extractUserId(id) {
+    if (!id) return id;
+    const idStr = String(id);
+    // If it contains underscore and looks like eventId_userId format, extract userId
+    if (idStr.includes('_')) {
+      const parts = idStr.split('_');
+      // Check if it's likely eventId_userId format (last part is numeric and short)
+      if (parts.length >= 2) {
+        const lastPart = parts[parts.length - 1];
+        // If last part is a short number (likely user ID), use it
+        if (/^\d+$/.test(lastPart) && lastPart.length < 10) {
+          return lastPart;
+        }
+      }
+    }
+    return idStr;
+  }
+
   static async getUserChats(userId) {
     try {
       // Ensure userId is a string for consistent comparison
       const userIdStr = String(userId);
       console.log('getUserChats: Searching for chats for user:', userIdStr);
 
-      // Get chats where user is userId1 or userId2
-      const q1 = query(
-        collection(db, CHATS_COLLECTION),
-        where('userId1', '==', userIdStr),
-        orderBy('updatedAt', 'desc')
-      );
+      // DEBUG: Get all chats to see what's in the database
+      const allChats = await this.getAllChats();
 
-      const q2 = query(
-        collection(db, CHATS_COLLECTION),
-        where('userId2', '==', userIdStr),
-        orderBy('updatedAt', 'desc')
-      );
+      let snapshot1, snapshot2;
 
-      const [snapshot1, snapshot2] = await Promise.all([
-        getDocs(q1),
-        getDocs(q2),
-      ]);
+      try {
+        // Try queries with orderBy (requires composite index)
+        const q1 = query(
+          collection(db, CHATS_COLLECTION),
+          where('userId1', '==', userIdStr),
+          orderBy('updatedAt', 'desc')
+        );
+
+        const q2 = query(
+          collection(db, CHATS_COLLECTION),
+          where('userId2', '==', userIdStr),
+          orderBy('updatedAt', 'desc')
+        );
+
+        [snapshot1, snapshot2] = await Promise.all([
+          getDocs(q1),
+          getDocs(q2),
+        ]);
+      } catch (indexError) {
+        // If index error, try without orderBy (fallback)
+        console.warn('Index error, trying fallback query without orderBy:', indexError.message);
+        
+        const q1Fallback = query(
+          collection(db, CHATS_COLLECTION),
+          where('userId1', '==', userIdStr)
+        );
+
+        const q2Fallback = query(
+          collection(db, CHATS_COLLECTION),
+          where('userId2', '==', userIdStr)
+        );
+
+        [snapshot1, snapshot2] = await Promise.all([
+          getDocs(q1Fallback),
+          getDocs(q2Fallback),
+        ]);
+      }
+
+      // Also fetch all chats and filter manually to catch chats with event-based IDs
+      const allChatsSnapshot = await getDocs(collection(db, CHATS_COLLECTION));
+      const manualMatches = [];
+      
+      allChatsSnapshot.forEach((docSnapshot) => {
+        const data = docSnapshot.data();
+        const dataUserId1 = String(data.userId1 || '');
+        const dataUserId2 = String(data.userId2 || '');
+        
+        // Extract actual user IDs (handle event-based IDs like "1763916921410_1")
+        const actualUserId1 = this.extractUserId(dataUserId1);
+        const actualUserId2 = this.extractUserId(dataUserId2);
+        
+        // Check if this chat belongs to the current user
+        if (actualUserId1 === userIdStr || actualUserId2 === userIdStr) {
+          // Make sure we don't duplicate chats already found by queries
+          const alreadyFound = [...snapshot1.docs, ...snapshot2.docs].some(
+            doc => doc.id === docSnapshot.id
+          );
+          
+          if (!alreadyFound) {
+            manualMatches.push(docSnapshot);
+            console.log('Found chat with event-based ID (manual match):', docSnapshot.id, 
+              'original userId1:', dataUserId1, 'extracted:', actualUserId1,
+              'original userId2:', dataUserId2, 'extracted:', actualUserId2);
+          }
+        }
+      });
 
       console.log(`getUserChats: Found ${snapshot1.size} chats as userId1, ${snapshot2.size} chats as userId2`);
 
       const chats = [];
 
-      snapshot1.forEach((docSnapshot) => {
+      // Process chats from query results (with unread counts)
+      const chatPromises = [...snapshot1.docs, ...snapshot2.docs, ...manualMatches].map(async (docSnapshot) => {
         const data = docSnapshot.data();
-        const chat = {
+        // Ensure userId1 and userId2 are strings for comparison
+        const dataUserId1 = String(data.userId1 || '');
+        const dataUserId2 = String(data.userId2 || '');
+        
+        // Extract actual user IDs (handle event-based IDs)
+        const actualUserId1 = this.extractUserId(dataUserId1);
+        const actualUserId2 = this.extractUserId(dataUserId2);
+        
+        // Determine which user is the current user and which is the other user
+        let otherUserId;
+        if (actualUserId1 === userIdStr) {
+          otherUserId = actualUserId2;
+        } else if (actualUserId2 === userIdStr) {
+          otherUserId = actualUserId1;
+        } else {
+          // Skip if this chat doesn't belong to current user
+          return null;
+        }
+        
+        // Get unread message count for this chat
+        const unreadCount = await this.getUnreadMessageCount(docSnapshot.id, userIdStr);
+        
+        return {
           id: docSnapshot.id,
           ...data,
+          userId1: actualUserId1, // Store normalized user IDs
+          userId2: actualUserId2,
           createdAt: data.createdAt?.toDate?.()?.toISOString() || data.createdAt,
           updatedAt: data.updatedAt?.toDate?.()?.toISOString() || data.updatedAt,
           lastMessageAt: data.lastMessageAt?.toDate?.()?.toISOString() || data.lastMessageAt,
-          otherUserId: String(data.userId2), // The other user in the chat
+          otherUserId: otherUserId, // The other user in the chat
+          unreadCount: unreadCount, // Number of unread messages
         };
-        console.log('Chat found (userId1):', chat.id, 'otherUserId:', chat.otherUserId, 'lastMessage:', chat.lastMessage);
-        chats.push(chat);
       });
 
-      snapshot2.forEach((docSnapshot) => {
-        const data = docSnapshot.data();
-        const chat = {
-          id: docSnapshot.id,
-          ...data,
-          createdAt: data.createdAt?.toDate?.()?.toISOString() || data.createdAt,
-          updatedAt: data.updatedAt?.toDate?.()?.toISOString() || data.updatedAt,
-          lastMessageAt: data.lastMessageAt?.toDate?.()?.toISOString() || data.lastMessageAt,
-          otherUserId: String(data.userId1), // The other user in the chat
-        };
-        console.log('Chat found (userId2):', chat.id, 'otherUserId:', chat.otherUserId, 'lastMessage:', chat.lastMessage);
-        chats.push(chat);
+      // Wait for all unread counts to be fetched
+      const processedChats = await Promise.all(chatPromises);
+      
+      // Filter out nulls and duplicates
+      processedChats.forEach((chat) => {
+        if (chat && !chats.find(c => c.id === chat.id)) {
+          console.log('Chat found:', chat.id, 'userId1:', chat.userId1, 'userId2:', chat.userId2, 'otherUserId:', chat.otherUserId, 'lastMessage:', chat.lastMessage, 'unreadCount:', chat.unreadCount);
+          chats.push(chat);
+        }
+      });
+
+      // Remove duplicates by chat ID (in case a chat appears in both queries)
+      const uniqueChatsById = chats.filter((chat, index, self) => 
+        index === self.findIndex(c => c.id === chat.id)
+      );
+
+      // Merge chats for the same users and event (keep the one with most recent message)
+      // Group chats by userId1+userId2+eventId combination
+      const chatGroups = new Map();
+      
+      uniqueChatsById.forEach(chat => {
+        // Create a key based on normalized user IDs and event ID
+        const key = [chat.userId1, chat.userId2, chat.eventId].sort().join('_');
+        
+        if (!chatGroups.has(key)) {
+          chatGroups.set(key, []);
+        }
+        chatGroups.get(key).push(chat);
+      });
+
+      // For each group, keep only the chat with the most recent message
+      const mergedChats = [];
+      chatGroups.forEach((groupChats, key) => {
+        if (groupChats.length === 1) {
+          // Only one chat in this group, keep it
+          mergedChats.push(groupChats[0]);
+        } else {
+          // Multiple chats for same users/event - merge them
+          console.log(`Merging ${groupChats.length} duplicate chats for key: ${key}`);
+          
+          // Sort by lastMessageAt (most recent first), then by updatedAt
+          groupChats.sort((a, b) => {
+            const timeA = new Date(a.lastMessageAt || a.updatedAt || a.createdAt).getTime();
+            const timeB = new Date(b.lastMessageAt || b.updatedAt || b.createdAt).getTime();
+            return timeB - timeA;
+          });
+
+          // Keep the most recent chat (first one after sorting)
+          const bestChat = groupChats[0];
+          
+          // Sum up unread counts from all chats in the group (in case messages are in different chats)
+          const totalUnreadCount = groupChats.reduce((sum, chat) => sum + (chat.unreadCount || 0), 0);
+          bestChat.unreadCount = totalUnreadCount;
+          
+          // If there are other chats with messages, we could merge their messages
+          // For now, we just keep the most recent one
+          mergedChats.push(bestChat);
+          
+          console.log(`Keeping chat ${bestChat.id} (has ${bestChat.lastMessage ? 'message' : 'no message'}, unread: ${totalUnreadCount}), ignoring ${groupChats.length - 1} duplicate(s)`);
+        }
       });
 
       // Sort by lastMessageAt (most recent first)
-      chats.sort((a, b) => {
+      mergedChats.sort((a, b) => {
         const timeA = new Date(a.lastMessageAt || a.updatedAt || a.createdAt).getTime();
         const timeB = new Date(b.lastMessageAt || b.updatedAt || b.createdAt).getTime();
         return timeB - timeA;
       });
 
-      console.log(`getUserChats: Returning ${chats.length} total chats`);
-      return chats;
+      console.log(`getUserChats: Returning ${mergedChats.length} total chats (after merging duplicates)`);
+      return mergedChats;
     } catch (error) {
       console.error('Error fetching user chats:', error);
+      console.error('Error details:', {
+        message: error.message,
+        code: error.code,
+        stack: error.stack
+      });
       return [];
     }
   }
@@ -251,6 +412,63 @@ class ChatService {
     } catch (error) {
       console.error('Error fetching chat details:', error);
       return null;
+    }
+  }
+
+  /**
+   * DEBUG: Get all chats in the database (for debugging purposes)
+   * @returns {Promise<Array>} - Array of all chats
+   */
+  static async getAllChats() {
+    try {
+      const q = query(collection(db, CHATS_COLLECTION));
+      const snapshot = await getDocs(q);
+      
+      const allChats = [];
+      snapshot.forEach((docSnapshot) => {
+        const data = docSnapshot.data();
+        allChats.push({
+          id: docSnapshot.id,
+          userId1: data.userId1,
+          userId2: data.userId2,
+          eventId: data.eventId,
+          lastMessage: data.lastMessage,
+          lastMessageAt: data.lastMessageAt?.toDate?.()?.toISOString() || data.lastMessageAt,
+        });
+      });
+      
+      console.log('DEBUG getAllChats: Found', allChats.length, 'total chats in database:');
+      allChats.forEach(chat => {
+        console.log('  - Chat ID:', chat.id, 'userId1:', chat.userId1, 'userId2:', chat.userId2, 'eventId:', chat.eventId, 'lastMessage:', chat.lastMessage);
+      });
+      
+      return allChats;
+    } catch (error) {
+      console.error('Error getting all chats:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get unread message count for a chat
+   * @param {string} chatId - Chat ID
+   * @param {string} userId - User ID (counts messages not sent by this user)
+   * @returns {Promise<number>} - Number of unread messages
+   */
+  static async getUnreadMessageCount(chatId, userId) {
+    try {
+      const q = query(
+        collection(db, MESSAGES_COLLECTION),
+        where('chatId', '==', chatId),
+        where('senderId', '!=', userId),
+        where('read', '==', false)
+      );
+
+      const querySnapshot = await getDocs(q);
+      return querySnapshot.size;
+    } catch (error) {
+      console.error('Error getting unread message count:', error);
+      return 0;
     }
   }
 

@@ -55,17 +55,43 @@ export const AuthProvider = ({ children }) => {
 
   // Initialize app: load auth state and migrate initial users to Firestore
   const initializeApp = async () => {
-    try {
-      // Migrate initial mock users to Firestore (one-time operation)
-      await UserService.migrateInitialUsers(INITIAL_MOCK_USERS);
-      
-      // Load saved auth state
-      await loadAuthState();
-    } catch (error) {
-      console.error('Error initializing app:', error);
-    } finally {
-      setIsLoading(false);
-    }
+    // Set a timeout to ensure app loads even if Firebase is slow/unreachable
+    const INIT_TIMEOUT = 10000; // 10 seconds max
+    
+    const timeoutPromise = new Promise((resolve) => {
+      setTimeout(() => {
+        console.warn('⚠️ App initialization timeout - loading app anyway');
+        resolve();
+      }, INIT_TIMEOUT);
+    });
+
+    const initPromise = (async () => {
+      try {
+        // Migrate initial mock users to Firestore (non-blocking - don't wait if slow)
+        // This runs in background - if it fails, user can still use the app
+        UserService.migrateInitialUsers(INITIAL_MOCK_USERS).catch((error) => {
+          console.error('User migration failed (non-critical):', error);
+        });
+        
+        // Load saved auth state (this is critical, so we wait for it)
+        // But wrap in timeout to prevent hanging
+        await Promise.race([
+          loadAuthState(),
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Auth load timeout')), 5000)
+          )
+        ]);
+      } catch (error) {
+        console.error('Error initializing app:', error);
+        // Continue anyway - user can still login
+      }
+    })();
+
+    // Wait for either initialization to complete or timeout
+    await Promise.race([initPromise, timeoutPromise]);
+    
+    // Always set loading to false, even if initialization is still running
+    setIsLoading(false);
   };
 
   const loadAuthState = async () => {
@@ -74,21 +100,37 @@ export const AuthProvider = ({ children }) => {
       const savedUser = await AsyncStorage.getItem(AUTH_STORAGE_KEY);
       if (savedUser) {
         const parsedUser = JSON.parse(savedUser);
-        // Verify user still exists in Firestore and get latest data
-        const firestoreUser = await UserService.getUserById(parsedUser.id);
-        if (firestoreUser) {
-          // Remove password from user object
-          const { password, ...userWithoutPassword } = firestoreUser;
-          setUser(userWithoutPassword);
-          // Update AsyncStorage with latest data
-          await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(userWithoutPassword));
-        } else {
-          // User deleted from Firestore, clear session
-          await AsyncStorage.removeItem(AUTH_STORAGE_KEY);
+        
+        // Try to verify user exists in Firestore, but don't block if network is slow
+        // Use cached user from AsyncStorage if Firestore check fails/times out
+        try {
+          const firestoreUser = await Promise.race([
+            UserService.getUserById(parsedUser.id),
+            new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('Firestore timeout')), 3000)
+            )
+          ]);
+          
+          if (firestoreUser) {
+            // Remove password from user object
+            const { password, ...userWithoutPassword } = firestoreUser;
+            setUser(userWithoutPassword);
+            // Update AsyncStorage with latest data
+            await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(userWithoutPassword));
+          } else {
+            // User deleted from Firestore, clear session
+            await AsyncStorage.removeItem(AUTH_STORAGE_KEY);
+          }
+        } catch (firestoreError) {
+          // Firestore check failed or timed out - use cached user from AsyncStorage
+          console.warn('Could not verify user in Firestore, using cached session:', firestoreError.message);
+          // Use cached user - user can still use the app offline
+          setUser(parsedUser);
         }
       }
     } catch (error) {
       console.error('Error loading auth state:', error);
+      // Don't throw - allow app to continue to login screen
     }
   };
 

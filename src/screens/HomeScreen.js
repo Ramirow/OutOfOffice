@@ -17,6 +17,7 @@ import AvailableEventsTab from './AvailableEventsTab';
 import MessengerTab from './MessengerTab';
 import AboutUsTab from './AboutUsTab';
 import ProfileScreen from './ProfileScreen';
+import ChatService from '../services/ChatService';
 
 const HomeScreen = () => {
   const [activeTab, setActiveTab] = useState('home');
@@ -25,6 +26,7 @@ const HomeScreen = () => {
   const [showProfile, setShowProfile] = useState(false);
   const [loadingEnrollments, setLoadingEnrollments] = useState(true);
   const [loadingCustomEvents, setLoadingCustomEvents] = useState(true);
+  const [unreadMessageCount, setUnreadMessageCount] = useState(0);
   const { logout, user, isAdmin, isPremium, canAddEvents } = useAuth();
 
   // Load enrolled events and custom events from Firestore when user logs in
@@ -32,8 +34,17 @@ const HomeScreen = () => {
     if (user?.id) {
       loadEnrolledEvents();
       loadCustomEvents();
+      loadUnreadMessageCount();
     }
   }, [user?.id]);
+
+  // Reload unread count when tab changes (user might have read messages)
+  useEffect(() => {
+    if (user?.id && activeTab !== 'messenger') {
+      // Reload unread count when user navigates away from messages tab
+      loadUnreadMessageCount();
+    }
+  }, [activeTab, user?.id]);
 
   // Load enrolled events from Firestore
   const loadEnrolledEvents = async () => {
@@ -64,6 +75,22 @@ const HomeScreen = () => {
       setCustomEvents([]);
     } finally {
       setLoadingCustomEvents(false);
+    }
+  };
+
+  // Load total unread message count across all chats
+  const loadUnreadMessageCount = async () => {
+    try {
+      if (!user?.id) return;
+      
+      const chats = await ChatService.getUserChats(user.id);
+      // Sum up all unread counts from all chats
+      const totalUnread = chats.reduce((sum, chat) => sum + (chat.unreadCount || 0), 0);
+      setUnreadMessageCount(totalUnread);
+      console.log('Total unread messages:', totalUnread);
+    } catch (error) {
+      console.error('Error loading unread message count:', error);
+      setUnreadMessageCount(0);
     }
   };
 
@@ -268,11 +295,7 @@ const HomeScreen = () => {
           <Text style={[styles.tabText, activeTab === 'explore' && styles.activeTabText]}>
             EXPLORE
           </Text>
-          {customEvents.length > 0 && (
-            <View style={styles.badge}>
-              <Text style={styles.badgeText}>{customEvents.length}</Text>
-            </View>
-          )}
+          {/* Badge removed - events are loaded dynamically in AvailableEventsTab */}
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -296,7 +319,11 @@ const HomeScreen = () => {
 
         <TouchableOpacity
           style={[styles.tabButton, activeTab === 'messenger' && styles.activeTab]}
-          onPress={() => setActiveTab('messenger')}
+          onPress={() => {
+            setActiveTab('messenger');
+            // Reload unread count when opening messages tab
+            loadUnreadMessageCount();
+          }}
         >
           <Ionicons 
             name="chatbubbles" 
@@ -306,6 +333,13 @@ const HomeScreen = () => {
           <Text style={[styles.tabText, activeTab === 'messenger' && styles.activeTabText]}>
             MESSAGES
           </Text>
+          {unreadMessageCount > 0 && (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>
+                {unreadMessageCount > 99 ? '99+' : unreadMessageCount}
+              </Text>
+            </View>
+          )}
         </TouchableOpacity>
 
         <TouchableOpacity

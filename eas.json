@@ -9,17 +9,29 @@
       "distribution": "internal",
       "android": {
         "image": "latest"
+      },
+      "ios": {
+        "image": "latest"
       }
     },
     "preview": {
       "distribution": "internal",
       "android": {
+        "image": "latest",
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleRelease"
+      },
+      "ios": {
         "image": "latest"
       }
     },
     "production": {
       "autoIncrement": true,
       "android": {
+        "image": "latest",
+        "buildType": "aab"
+      },
+      "ios": {
         "image": "latest"
       }
     }

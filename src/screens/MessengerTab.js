@@ -77,9 +77,15 @@ const MessengerTab = () => {
         })
       );
       
-      // Filter out chats without user profiles (they'll be loaded on next refresh)
-      const validChats = chatsWithUsers.filter(chat => chat.otherUser);
-      console.log('Valid chats with user profiles:', validChats.length);
+      // Filter out chats without user profiles and chats with no messages
+      const validChats = chatsWithUsers.filter(chat => {
+        // Must have user profile
+        if (!chat.otherUser) return false;
+        // Must have at least one message (lastMessage should not be null)
+        if (!chat.lastMessage) return false;
+        return true;
+      });
+      console.log('Valid chats with user profiles and messages:', validChats.length);
       setChats(validChats);
     } catch (error) {
       console.error('Error loading chats:', error);
@@ -129,6 +135,9 @@ const MessengerTab = () => {
       return null; // Skip if user not loaded yet
     }
 
+    const unreadCount = item.unreadCount || 0;
+    const hasUnread = unreadCount > 0;
+
     return (
       <TouchableOpacity
         style={styles.chatItem}
@@ -141,15 +150,26 @@ const MessengerTab = () => {
         />
         <View style={styles.chatContent}>
           <View style={styles.chatHeader}>
-            <Text style={styles.chatName}>{otherUser.name || otherUser.email}</Text>
-            <Text style={styles.chatTime}>{formatTime(item.lastMessageAt || item.updatedAt)}</Text>
+            <Text style={[styles.chatName, hasUnread && styles.chatNameUnread]}>
+              {otherUser.name || otherUser.email}
+            </Text>
+            <View style={styles.chatHeaderRight}>
+              <Text style={styles.chatTime}>{formatTime(item.lastMessageAt || item.updatedAt)}</Text>
+              {hasUnread && (
+                <View style={styles.unreadBadge}>
+                  <Text style={styles.unreadBadgeText}>
+                    {unreadCount > 99 ? '99+' : unreadCount}
+                  </Text>
+                </View>
+              )}
+            </View>
           </View>
           <View style={styles.chatFooter}>
             <Text style={styles.chatEvent} numberOfLines={1}>
               {item.eventTitle}
             </Text>
             {item.lastMessage ? (
-              <Text style={styles.chatPreview} numberOfLines={1}>
+              <Text style={[styles.chatPreview, hasUnread && styles.chatPreviewUnread]} numberOfLines={1}>
                 {item.lastMessage}
               </Text>
             ) : (
@@ -255,10 +275,31 @@ const styles = StyleSheet.create({
     color: '#333',
     flex: 1,
   },
+  chatNameUnread: {
+    fontWeight: '700',
+  },
+  chatHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   chatTime: {
     fontSize: 12,
     color: '#999',
-    marginLeft: 8,
+  },
+  unreadBadge: {
+    backgroundColor: '#007AFF',
+    borderRadius: 12,
+    minWidth: 24,
+    height: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 6,
+  },
+  unreadBadgeText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold',
   },
   chatFooter: {
     flexDirection: 'row',
@@ -277,6 +318,10 @@ const styles = StyleSheet.create({
     color: '#666',
     flex: 2,
     textAlign: 'right',
+  },
+  chatPreviewUnread: {
+    fontWeight: '600',
+    color: '#333',
   },
   loadingContainer: {
     flex: 1,
