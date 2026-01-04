@@ -182,52 +182,53 @@ const ChatScreen = ({ route, navigation }) => {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity 
-          style={styles.headerButton}
-          onPress={() => navigation.goBack()}
-        >
-          <Ionicons name="arrow-back" size={24} color="#333" />
-        </TouchableOpacity>
-        <View style={styles.headerInfo}>
-          <Image
-            source={{ uri: selectedMatch.image }}
-            style={styles.headerAvatar}
-          />
-          <View style={styles.headerTextContainer}>
-            <Text style={styles.headerTitle}>{selectedMatch.name}</Text>
-            <Text style={styles.headerSubtitle}>Matched at {event.title}</Text>
-          </View>
-        </View>
-        <TouchableOpacity style={styles.headerButton}>
-          <Ionicons name="call-outline" size={24} color="#007AFF" />
-        </TouchableOpacity>
-      </View>
-
-      {/* Messages */}
-      {loading ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#007AFF" />
-          <Text style={styles.loadingText}>Loading messages...</Text>
-        </View>
-      ) : (
-        <FlatList
-          ref={flatListRef}
-          data={messages}
-          renderItem={renderMessage}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.messagesList}
-          inverted={false}
-          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
-        />
-      )}
-
-      {/* Message Input */}
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
+        {/* Header */}
+        <View style={styles.header}>
+          <TouchableOpacity 
+            style={styles.headerButton}
+            onPress={() => navigation.goBack()}
+          >
+            <Ionicons name="arrow-back" size={24} color="#333" />
+          </TouchableOpacity>
+          <View style={styles.headerInfo}>
+            <Image
+              source={{ uri: selectedMatch.image }}
+              style={styles.headerAvatar}
+            />
+            <View style={styles.headerTextContainer}>
+              <Text style={styles.headerTitle}>{selectedMatch.name}</Text>
+              <Text style={styles.headerSubtitle}>Matched at {event.title}</Text>
+            </View>
+          </View>
+          <TouchableOpacity style={styles.headerButton}>
+            <Ionicons name="call-outline" size={24} color="#007AFF" />
+          </TouchableOpacity>
+        </View>
+
+        {/* Messages */}
+        {loading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#007AFF" />
+            <Text style={styles.loadingText}>Loading messages...</Text>
+          </View>
+        ) : (
+          <FlatList
+            ref={flatListRef}
+            data={messages}
+            renderItem={renderMessage}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={styles.messagesList}
+            inverted={false}
+            onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+          />
+        )}
+
+        {/* Message Input */}
         <View style={[styles.inputContainer, { paddingBottom: Math.max(insets.bottom, 10) }]}>
           <TouchableOpacity style={styles.attachmentButton}>
             <Ionicons name="attach" size={24} color="#666" />

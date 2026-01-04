@@ -29,7 +29,7 @@
       "autoIncrement": true,
       "android": {
         "image": "latest",
-        "buildType": "aab"
+        "buildType": "app-bundle"
       },
       "ios": {
         "image": "latest"
